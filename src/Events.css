@@ -1,0 +1,19 @@
+@keyframes fadeIn {
+    from {
+        grid-template-rows: 0fr;
+    }
+    to {
+        grid-template-rows: 1fr;
+    }
+}
+
+.s-enter-active, .s-exit-active {
+    transition: all 1s ease-out;
+}
+
+.s-enter, .s-exit-to {
+    grid-template-rows: 0fr;
+}
+.s-enter-to {
+    grid-template-rows: 1fr;
+}
