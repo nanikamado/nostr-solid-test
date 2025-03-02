@@ -7,13 +7,6 @@
     }
 }
 
-.s-enter-active, .s-exit-active {
-    transition: all 1s ease-out;
-}
-
-.s-enter, .s-exit-to {
-    grid-template-rows: 0fr;
-}
-.s-enter-to {
-    grid-template-rows: 1fr;
+.grid-animated-ul.transition {
+    animation: fadeIn .5s ease-out forwards;
 }

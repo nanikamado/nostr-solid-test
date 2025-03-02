@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "lib": [
+          "esnext",
+          "dom",
+          "webworker",
+          "deno.ns"
+        ],
+        "jsx": "react-jsx",
+        "jsxImportSource": "npm:solid-js"
+    },
+    "imports": {
+        "@std/assert": "jsr:@std/assert@^1.0.11"
+    }
+}
