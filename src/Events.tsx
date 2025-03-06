@@ -299,7 +299,7 @@ function NostrEvents() {
             <div
               ref={(el) => observer.observe(el as HTMLElement)}
               class="grid grid-animated-ul"
-              classList={{ transition: event.transition }}
+              // classList={{ transition: event.transition }}
               style="overflow-wrap: anywhere;"
               data-event-id={event.event.id}
               data-real-time={event.realTime}
