@@ -268,11 +268,11 @@ function NostrEvents() {
         }
       }
       console.log(relay, top, middle, bottom);
-      if (top < 3) {
+      if (top < 10) {
         state.startSubscribing(newestDate, newestId);
       } else {
         state.stopSubscribing();
-        if (top > 10) {
+        if (top > 20) {
           removeEventsFromTop(top - 10, relay);
         }
       }
@@ -299,7 +299,7 @@ function NostrEvents() {
             <div
               ref={(el) => observer.observe(el as HTMLElement)}
               class="grid grid-animated-ul"
-              // classList={{ transition: event.transition }}
+              classList={{ transition: event.transition }}
               style="overflow-wrap: anywhere;"
               data-event-id={event.event.id}
               data-real-time={event.realTime}
