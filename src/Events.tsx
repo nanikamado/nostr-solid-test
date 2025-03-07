@@ -283,13 +283,20 @@ function NostrEvents() {
   });
 
   let ulElement: HTMLElement | null = null;
+  const cutEvents = () => {
+    const i = events.findIndex((e) => e.possition === "middle");
+    if (i <= 2) {
+      return events;
+    }
+    return events.slice(i - 2);
+  };
 
   return (
     <ul class="mt-4 overflow-scroll" ref={(el) => (ulElement = el)}>
       <Show when={events.length === 0}>
         <div>loading ...</div>
       </Show>
-      <For each={events}>
+      <For each={cutEvents()}>
         {(event) => {
           console.log("add", event.event.created_at, event.event.id);
           if (!event.realTime && ulElement && ulElement.scrollTop === 0) {
