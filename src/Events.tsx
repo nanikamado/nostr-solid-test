@@ -28,6 +28,18 @@ type RelayState = {
   init: () => void;
 };
 
+const boxPosition = (box: HTMLElement, parent: HTMLElement) => {
+  if (box.getBoundingClientRect().bottom < parent.getBoundingClientRect().top) {
+    return "top";
+  } else if (
+    box.getBoundingClientRect().top > parent.getBoundingClientRect().bottom
+  ) {
+    return "bottom";
+  } else {
+    return "middle";
+  }
+};
+
 function NostrEvents() {
   const [events, setEvents] = createStore<EventSignal[]>([]);
 
@@ -242,19 +254,7 @@ function NostrEvents() {
           if (i === -1) {
             continue;
           }
-          if (
-            che.getBoundingClientRect().bottom <
-            ulElement.getBoundingClientRect().top
-          ) {
-            setEvents(i, "possition", "top");
-          } else if (
-            che.getBoundingClientRect().top >
-            ulElement.getBoundingClientRect().bottom
-          ) {
-            setEvents(i, "possition", "bottom");
-          } else {
-            setEvents(i, "possition", "middle");
-          }
+          setEvents(i, "possition", boxPosition(che, ulElement));
         }
         for (const [relay, state] of relays) {
           let top = 0;
@@ -366,10 +366,13 @@ function Note(event: EventSignal, parent: HTMLElement) {
   //   console.log("remove", event.event.created_at, event.event.id);
   // });
   let element: HTMLElement | null = null;
+  const originalScrollTop = parent.scrollTop;
   onMount(() => {
     if (element) {
-      if (event.possition === "top") {
-        parent.scrollBy({ top: element.getBoundingClientRect().height });
+      if (boxPosition(element, parent) === "top") {
+        console.log("scrollby", element.getBoundingClientRect().height);
+        parent.scrollTop =
+          originalScrollTop + element.getBoundingClientRect().height;
       }
       // console.log(
       //   "height",
@@ -383,9 +386,9 @@ function Note(event: EventSignal, parent: HTMLElement) {
     if (!element) {
       return;
     }
-    if (event.possition === "top") {
-      parent.scrollBy({ top: -element.getBoundingClientRect().height });
-    }
+    // if (boxPosition(element, parent) === "top") {
+    //   parent.scrollBy({ top: -element.getBoundingClientRect().height });
+    // }
     console.log(
       "height",
       element.getBoundingClientRect().height,
