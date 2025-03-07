@@ -215,12 +215,59 @@ function NostrEvents() {
     };
   };
 
+  let ulElement: HTMLElement | null = null;
+
   onMount(() => {
     for (const relay in rxNostr.getDefaultRelays()) {
       const s = relayState(relay);
       s.init();
       relays.set(relay, s);
     }
+    let h: undefined | number;
+    ulElement!.onscroll = () => {
+      if (h) {
+        clearTimeout(h);
+      }
+      h = setTimeout(() => {
+        console.log("scrollend");
+        for (const [relay, state] of relays) {
+          let top = 0;
+          let middle = 0;
+          let bottom = 0;
+          const [newestDate, newestId] = events[0]
+            ? [events[0].event.created_at, events[0].event.id]
+            : [now(), ""];
+          for (const e of events) {
+            if (e.relays.indexOf(relay) === -1) {
+              continue;
+            }
+            switch (e.possition) {
+              case "top":
+                top++;
+                break;
+              case "middle":
+                middle++;
+                break;
+              case "bottom":
+                bottom++;
+                break;
+            }
+          }
+          console.log(relay, top, middle, bottom);
+          if (top < 10) {
+            state.startSubscribing(newestDate, newestId);
+          } else {
+            state.stopSubscribing();
+            if (top > 20) {
+              removeEventsFromTop(top - 10, relay);
+            }
+          }
+          if (bottom > 10) {
+            removeEventsFromBottom(bottom - 10, relay);
+          }
+        }
+      }, 100);
+    };
   });
 
   onCleanup(() => {
@@ -244,45 +291,8 @@ function NostrEvents() {
         setEvents(ev, "possition", "middle");
       }
     }
-    for (const [relay, state] of relays) {
-      let top = 0;
-      let middle = 0;
-      let bottom = 0;
-      const [newestDate, newestId] = events[0]
-        ? [events[0].event.created_at, events[0].event.id]
-        : [now(), ""];
-      for (const e of events) {
-        if (e.relays.indexOf(relay) === -1) {
-          continue;
-        }
-        switch (e.possition) {
-          case "top":
-            top++;
-            break;
-          case "middle":
-            middle++;
-            break;
-          case "bottom":
-            bottom++;
-            break;
-        }
-      }
-      console.log(relay, top, middle, bottom);
-      if (top < 10) {
-        state.startSubscribing(newestDate, newestId);
-      } else {
-        state.stopSubscribing();
-        if (top > 20) {
-          removeEventsFromTop(top - 10, relay);
-        }
-      }
-      if (bottom > 10) {
-        removeEventsFromBottom(bottom - 10, relay);
-      }
-    }
   });
 
-  let ulElement: HTMLElement | null = null;
   const cutEvents = () => {
     const i = events.findIndex((e) => e.possition === "middle");
     if (i <= 2) {
@@ -290,38 +300,94 @@ function NostrEvents() {
     }
     return events.slice(i - 2);
   };
+  // let scrollHeightOld = 0;
 
   return (
-    <ul class="mt-4 overflow-scroll" ref={(el) => (ulElement = el)}>
+    <ul
+      class="mt-4 overflow-scroll"
+      ref={(el) => {
+        ulElement = el;
+        // el.onscroll = () => {
+        //   if (el.scrollHeight !== scrollHeightOld) {
+        //     console.log("scrollHeight", el.scrollHeight);
+        //     el.scrollBy({ top: el.scrollHeight - scrollHeightOld });
+        //     scrollHeightOld = el.scrollHeight;
+        //   }
+        // };
+      }}
+    >
       <Show when={events.length === 0}>
         <div>loading ...</div>
       </Show>
       <For each={cutEvents()}>
         {(event) => {
           console.log("add", event.event.created_at, event.event.id);
-          if (!event.realTime && ulElement && ulElement.scrollTop === 0) {
-            ulElement.scroll({ top: 1 });
-          }
-          return (
-            <div
-              ref={(el) => observer.observe(el as HTMLElement)}
-              class="grid grid-animated-ul"
-              classList={{ transition: event.transition }}
-              style="overflow-wrap: anywhere;"
-              data-event-id={event.event.id}
-              data-real-time={event.realTime}
-            >
-              <div style="overflow: hidden;">
-                <div class="border-t py-2 text-sm font-mono whitespace-pre-wrap">
-                  <div>{[...event.relays].join(", ")}</div>
-                  <div>{JSON.stringify(event.event)}</div>
-                </div>
-              </div>
-            </div>
-          );
+          // if (!event.realTime && ulElement && ulElement.scrollTop === 0) {
+          //   ulElement.scroll({ top: 1 });
+          // }
+          return Note(event, observer, ulElement as HTMLElement);
         }}
       </For>
     </ul>
+  );
+}
+
+function Note(
+  event: EventSignal,
+  observer: IntersectionObserver,
+  parent: HTMLElement
+) {
+  // onCleanup(() => {
+  //   console.log("remove", event.event.created_at, event.event.id);
+  // });
+  let element: HTMLElement | null = null;
+  onMount(() => {
+    if (element) {
+      if (event.possition === "top") {
+        parent.scrollBy({ top: element.getBoundingClientRect().height });
+      }
+      // console.log(
+      //   "height",
+      //   element.getBoundingClientRect().height,
+      //   element.clientHeight,
+      //   element.offsetHeight
+      // );
+    }
+  });
+  onCleanup(() => {
+    if (!element) {
+      return;
+    }
+    observer.unobserve(element);
+    if (event.possition === "top") {
+      parent.scrollBy({ top: -element.getBoundingClientRect().height });
+    }
+    console.log(
+      "height",
+      element.getBoundingClientRect().height,
+      element.clientHeight,
+      element.offsetHeight
+    );
+  });
+  return (
+    <div
+      ref={(el) => {
+        observer.observe(el as HTMLElement);
+        element = el;
+      }}
+      class="grid grid-animated-ul"
+      // classList={{ transition: event.transition }}
+      style="overflow-wrap: anywhere;"
+      data-event-id={event.event.id}
+      data-real-time={event.realTime}
+    >
+      <div style="overflow: hidden;">
+        <div class="border-t py-2 text-sm font-mono whitespace-pre-wrap">
+          <div>{[...event.relays].join(", ")}</div>
+          <div>{JSON.stringify(event.event)}</div>
+        </div>
+      </div>
+    </div>
   );
 }
 
