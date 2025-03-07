@@ -293,13 +293,13 @@ function NostrEvents() {
     }
   });
 
-  const cutEvents = () => {
-    const i = events.findIndex((e) => e.possition === "middle");
-    if (i <= 2) {
-      return events;
-    }
-    return events.slice(i - 2);
-  };
+  // const cutEvents = () => {
+  //   const i = events.findIndex((e) => e.possition === "middle");
+  //   if (i <= 2) {
+  //     return events;
+  //   }
+  //   return events.slice(i - 2);
+  // };
   // let scrollHeightOld = 0;
 
   return (
@@ -319,7 +319,7 @@ function NostrEvents() {
       <Show when={events.length === 0}>
         <div>loading ...</div>
       </Show>
-      <For each={cutEvents()}>
+      <For each={events}>
         {(event) => {
           console.log("add", event.event.created_at, event.event.id);
           // if (!event.realTime && ulElement && ulElement.scrollTop === 0) {
