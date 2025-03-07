@@ -224,18 +224,47 @@ function NostrEvents() {
       relays.set(relay, s);
     }
     let h: undefined | number;
-    ulElement!.onscroll = () => {
+    if (!ulElement) {
+      return;
+    }
+    ulElement.onscroll = () => {
       if (h) {
         clearTimeout(h);
       }
       h = setTimeout(() => {
         console.log("scrollend");
+        if (!ulElement) {
+          return;
+        }
+        for (const ch of Array.from(ulElement.children)) {
+          const che = ch as HTMLElement;
+          const i = events.findIndex((e) => e.event.id == che.dataset.eventId);
+          if (i === -1) {
+            continue;
+          }
+          if (
+            che.getBoundingClientRect().bottom <
+            ulElement.getBoundingClientRect().top
+          ) {
+            setEvents(i, "possition", "top");
+          } else if (
+            che.getBoundingClientRect().top >
+            ulElement.getBoundingClientRect().bottom
+          ) {
+            setEvents(i, "possition", "bottom");
+          } else {
+            setEvents(i, "possition", "middle");
+          }
+        }
         for (const [relay, state] of relays) {
           let top = 0;
           let middle = 0;
           let bottom = 0;
-          const [newestDate, newestId] = events[0]
-            ? [events[0].event.created_at, events[0].event.id]
+          const latestEvent = events.find(
+            (e) => e.relays.indexOf(relay) !== -1
+          );
+          const [newestDate, newestId] = latestEvent
+            ? [latestEvent.event.created_at, latestEvent.event.id]
             : [now(), ""];
           for (const e of events) {
             if (e.relays.indexOf(relay) === -1) {
@@ -274,24 +303,24 @@ function NostrEvents() {
     webSeckets.forEach((ws) => ws.close());
   });
 
-  const observer = new IntersectionObserver((entries) => {
-    for (const e of entries) {
-      const ev = events.findIndex(
-        (ev) => ev.event.id == (e.target as HTMLElement).dataset.eventId
-      );
-      if (ev === -1) {
-        continue;
-      }
-      if (!e.isIntersecting) {
-        const isDown =
-          ((e.rootBounds?.bottom || 0) + (e.rootBounds?.top || 0)) / 2 <
-          e.boundingClientRect.top;
-        setEvents(ev, "possition", isDown ? "bottom" : "top");
-      } else {
-        setEvents(ev, "possition", "middle");
-      }
-    }
-  });
+  // const observer = new IntersectionObserver((entries) => {
+  //   for (const e of entries) {
+  //     const ev = events.findIndex(
+  //       (ev) => ev.event.id == (e.target as HTMLElement).dataset.eventId
+  //     );
+  //     if (ev === -1) {
+  //       continue;
+  //     }
+  //     if (!e.isIntersecting) {
+  //       const isDown =
+  //         ((e.rootBounds?.bottom || 0) + (e.rootBounds?.top || 0)) / 2 <
+  //         e.boundingClientRect.top;
+  //       setEvents(ev, "possition", isDown ? "bottom" : "top");
+  //     } else {
+  //       setEvents(ev, "possition", "middle");
+  //     }
+  //   }
+  // });
 
   // const cutEvents = () => {
   //   const i = events.findIndex((e) => e.possition === "middle");
@@ -325,18 +354,14 @@ function NostrEvents() {
           // if (!event.realTime && ulElement && ulElement.scrollTop === 0) {
           //   ulElement.scroll({ top: 1 });
           // }
-          return Note(event, observer, ulElement as HTMLElement);
+          return Note(event, ulElement as HTMLElement);
         }}
       </For>
     </ul>
   );
 }
 
-function Note(
-  event: EventSignal,
-  observer: IntersectionObserver,
-  parent: HTMLElement
-) {
+function Note(event: EventSignal, parent: HTMLElement) {
   // onCleanup(() => {
   //   console.log("remove", event.event.created_at, event.event.id);
   // });
@@ -358,7 +383,6 @@ function Note(
     if (!element) {
       return;
     }
-    observer.unobserve(element);
     if (event.possition === "top") {
       parent.scrollBy({ top: -element.getBoundingClientRect().height });
     }
@@ -372,7 +396,6 @@ function Note(
   return (
     <div
       ref={(el) => {
-        observer.observe(el as HTMLElement);
         element = el;
       }}
       class="grid grid-animated-ul"
