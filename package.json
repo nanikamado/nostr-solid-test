@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@solid-primitives/deep": "^0.3.0",
     "@solid-primitives/intersection-observer": "^2.2.0",
     "@solid-primitives/scroll": "^2.1.0",
     "rx-nostr": "^3.5.0",

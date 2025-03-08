@@ -1,5 +1,5 @@
 import "./Events.css";
-import { onCleanup, onMount, For, Show } from "solid-js";
+import { onCleanup, onMount, For, Show, createEffect } from "solid-js";
 import { get_events_rev, NostrEvent } from "./nostr.ts";
 // import { Channel } from "./channel.ts";
 import {
@@ -13,6 +13,7 @@ import {
 import { verifier } from "rx-nostr-crypto";
 import * as Rx from "rxjs";
 import { createStore } from "solid-js/store";
+import { trackDeep } from "@solid-primitives/deep";
 
 type EventSignal = {
   event: NostrEvent;
@@ -228,6 +229,8 @@ function NostrEvents() {
   };
 
   let ulElement: HTMLElement | null = null;
+  let scrolling: undefined | number;
+  const [noteList, setNoteList] = createStore<EventSignal[]>([]);
 
   onMount(() => {
     for (const relay in rxNostr.getDefaultRelays()) {
@@ -235,66 +238,69 @@ function NostrEvents() {
       s.init();
       relays.set(relay, s);
     }
-    let h: undefined | number;
     if (!ulElement) {
       return;
     }
-    ulElement.onscroll = () => {
-      if (h) {
-        clearTimeout(h);
+    const load = () => {
+      if (!ulElement) {
+        return;
       }
-      h = setTimeout(() => {
-        console.log("scrollend");
-        if (!ulElement) {
-          return;
+      for (const ch of Array.from(ulElement.children)) {
+        const che = ch as HTMLElement;
+        const i = events.findIndex((e) => e.event.id == che.dataset.eventId);
+        if (i === -1) {
+          continue;
         }
-        for (const ch of Array.from(ulElement.children)) {
-          const che = ch as HTMLElement;
-          const i = events.findIndex((e) => e.event.id == che.dataset.eventId);
-          if (i === -1) {
+        setEvents(i, "possition", boxPosition(che, ulElement));
+      }
+      for (const [relay, state] of relays) {
+        let top = 0;
+        let middle = 0;
+        let bottom = 0;
+        const latestEvent = events.find((e) => e.relays.indexOf(relay) !== -1);
+        const [newestDate, newestId] = latestEvent
+          ? [latestEvent.event.created_at, latestEvent.event.id]
+          : [now(), ""];
+        for (const e of events) {
+          if (e.relays.indexOf(relay) === -1) {
             continue;
           }
-          setEvents(i, "possition", boxPosition(che, ulElement));
-        }
-        for (const [relay, state] of relays) {
-          let top = 0;
-          let middle = 0;
-          let bottom = 0;
-          const latestEvent = events.find(
-            (e) => e.relays.indexOf(relay) !== -1
-          );
-          const [newestDate, newestId] = latestEvent
-            ? [latestEvent.event.created_at, latestEvent.event.id]
-            : [now(), ""];
-          for (const e of events) {
-            if (e.relays.indexOf(relay) === -1) {
-              continue;
-            }
-            switch (e.possition) {
-              case "top":
-                top++;
-                break;
-              case "middle":
-                middle++;
-                break;
-              case "bottom":
-                bottom++;
-                break;
-            }
-          }
-          console.log(relay, top, middle, bottom);
-          if (top < 10) {
-            state.startSubscribing(newestDate, newestId);
-          } else {
-            state.stopSubscribing();
-            if (top > 20) {
-              removeEventsFromTop(top - 10, relay);
-            }
-          }
-          if (bottom > 10) {
-            removeEventsFromBottom(bottom - 10, relay);
+          switch (e.possition) {
+            case "top":
+              top++;
+              break;
+            case "middle":
+              middle++;
+              break;
+            case "bottom":
+              bottom++;
+              break;
           }
         }
+        console.log(relay, top, middle, bottom);
+        if (top < 10) {
+          state.startSubscribing(newestDate, newestId);
+        } else {
+          state.stopSubscribing();
+          if (top > 20) {
+            removeEventsFromTop(top - 10, relay);
+          }
+        }
+        if (bottom > 10) {
+          removeEventsFromBottom(bottom - 10, relay);
+        }
+      }
+      setNoteList(events);
+    };
+    load();
+    ulElement.onscroll = () => {
+      if (scrolling) {
+        clearTimeout(scrolling);
+      }
+      scrolling = setTimeout(() => {
+        scrolling = undefined;
+        console.log("scrollend");
+        load();
       }, 100);
     };
   });
@@ -331,6 +337,15 @@ function NostrEvents() {
   // };
   // let scrollHeightOld = 0;
 
+  // watch events and update noteList
+  createEffect(() => {
+    trackDeep(events);
+    if (!scrolling) {
+      console.log("not scrolling");
+      setNoteList(events);
+    }
+  });
+
   return (
     <ul
       class="mt-4 overflow-scroll"
@@ -345,10 +360,10 @@ function NostrEvents() {
         // };
       }}
     >
-      <Show when={events.length === 0}>
+      <Show when={noteList.length === 0}>
         <div>loading ...</div>
       </Show>
-      <For each={events}>
+      <For each={noteList}>
         {(event) => {
           console.log("add", event.event.created_at, event.event.id);
           // if (!event.realTime && ulElement && ulElement.scrollTop === 0) {
