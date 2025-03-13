@@ -268,7 +268,7 @@ function Note(event: EventSignal, observer: IntersectionObserver) {
         observer.observe(el);
       }}
       class="grid grid-animated-ul"
-      // classList={{ transition: event.transition }}
+      classList={{ transition: event.transition }}
       style="overflow-wrap: anywhere;"
       data-event-id={event.event.id}
       data-real-time={event.realTime}
