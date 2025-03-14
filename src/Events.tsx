@@ -53,6 +53,7 @@ type UserProfile = {
   name: string;
   picture?: string;
   created_at: number;
+  emojiMap: Map<string, string>;
 };
 
 function NostrEvents({ npub }: NostrEventsProps) {
@@ -385,6 +386,33 @@ type AppState = {
   profileMap: Map<string, ProfileMapValue>;
 };
 
+type ParseTextResult = (["text", string] | ["emoji", string, string])[];
+
+const parseText = (
+  text: string,
+  emojiMap: Map<string, string>
+): ParseTextResult => {
+  const sections = text.split(":");
+  const result: ParseTextResult = [];
+  let canBeEmoji = false;
+  for (const section of sections) {
+    if (canBeEmoji) {
+      const url = emojiMap.get(section);
+      if (url) {
+        result.push(["emoji", section, url]);
+        canBeEmoji = false;
+      } else {
+        result.push(["text", ":" + section]);
+        canBeEmoji = true;
+      }
+    } else {
+      result.push(["text", section]);
+      canBeEmoji = true;
+    }
+  }
+  return result;
+};
+
 function Note(
   event: EventSignal,
   observer: IntersectionObserver,
@@ -413,21 +441,24 @@ function Note(
       if (get[1] && a.event.created_at <= get[1].created_at) {
         return;
       }
-      let p;
+      const emojiMap = new Map<string, string>();
+      a.event.tags.forEach((t) => {
+        if (t.length >= 3 && t[0] === "emoji") {
+          emojiMap.set(t[1], t[2]);
+        }
+      });
+      const p: UserProfile = {
+        pubkey: a.event.pubkey,
+        name: "",
+        created_at: a.event.created_at,
+        emojiMap,
+      };
       try {
         const profileObj = JSON.parse(a.event.content);
-        p = {
-          pubkey: event.event.pubkey,
-          name: profileObj.display_name || profileObj.name || "",
-          picture: profileObj.picture,
-          created_at: a.event.created_at,
-        };
+        p.name = profileObj.display_name || profileObj.name || "";
+        p.picture = profileObj.picture;
       } catch (_e) {
-        p = {
-          pubkey: event.event.pubkey,
-          name: event.event.pubkey,
-          created_at: a.event.created_at,
-        };
+        p.name = a.event.pubkey;
       }
       set(["profile", p]);
     });
@@ -460,7 +491,19 @@ function Note(
             </Show>
             <div>
               <Show when={prof()} fallback={<div>loading ...</div>}>
-                <div class="font-bold">{prof()!.name}</div>
+                <div class="font-bold">
+                  <For each={parseText(prof()!.name, prof()!.emojiMap)}>
+                    {(section) => {
+                      if (section[0] === "text") {
+                        return <span>{section[1]}</span>;
+                      } else {
+                        return (
+                          <img class="inline-block h-5" src={section[2]} />
+                        );
+                      }
+                    }}
+                  </For>
+                </div>
               </Show>
               <div>{JSON.stringify(event.event)}</div>
             </div>
