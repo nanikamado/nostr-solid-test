@@ -8,6 +8,7 @@ import {
   createRxBackwardReq,
   RxNostr,
   EventPacket,
+  LazyFilter,
 } from "rx-nostr";
 // import * as Rxn from "rx-nostr";
 import { verifier } from "rx-nostr-crypto";
@@ -42,6 +43,28 @@ const binarySearch = <T,>(arr: T[], f: (item: T) => boolean): number => {
   }
 
   return right;
+};
+
+const subscribeReplacable = (
+  rxNostr: RxNostr,
+  filter: LazyFilter,
+  callback: (e: EventPacket) => void
+) => {
+  const rxReq = createRxForwardReq();
+  let latestCreatedAt = 0;
+  let latestId = "x";
+  rxNostr.use(rxReq).subscribe((a) => {
+    if (
+      a.event.created_at < latestCreatedAt ||
+      (a.event.created_at === latestCreatedAt && a.event.id >= latestId)
+    ) {
+      return;
+    }
+    latestCreatedAt = a.event.created_at;
+    latestId = a.event.id;
+    callback(a);
+  });
+  rxReq.emit(filter);
 };
 
 type NostrEventsProps = {
@@ -233,16 +256,18 @@ function NostrEvents({ npub }: NostrEventsProps) {
   let scrolling: undefined | number;
 
   onMount(() => {
-    const rxReq = createRxForwardReq();
-    rxNostr.use(rxReq).subscribe((a) => {
-      const followees = a.event.tags.flatMap((t) =>
-        t.length >= 2 && t[0] === "p" ? [t[1]] : []
-      );
-      if (followees.length !== 0) {
-        setFollowees(followees);
+    subscribeReplacable(
+      rxNostr,
+      { kinds: [3], limit: 1, authors: [npub] },
+      (a) => {
+        const followees = a.event.tags.flatMap((t) =>
+          t.length >= 2 && t[0] === "p" ? [t[1]] : []
+        );
+        if (followees.length !== 0) {
+          setFollowees(followees);
+        }
       }
-    });
-    rxReq.emit({ kinds: [3], limit: 1, authors: [npub] });
+    );
     for (const relay in rxNostr.getDefaultRelays()) {
       const s = relayState(relay);
       relays.set(relay, s);
@@ -413,6 +438,8 @@ const parseText = (
   return result;
 };
 
+const imageUrl = (original: string | undefined) =>
+  original ? "https://corsproxy.io/?url=" + encodeURIComponent(original) : "";
 function Note(
   event: EventSignal,
   observer: IntersectionObserver,
@@ -436,33 +463,32 @@ function Note(
   if (!p) {
     const [get, set] = createStore<ProfileMapValueInner>(["loading"]);
     state.profileMap.set(event.event.pubkey, { get, set });
-    const rxReq = createRxForwardReq();
-    state.rxNostr.use(rxReq).subscribe((a: EventPacket) => {
-      if (get[1] && a.event.created_at <= get[1].created_at) {
-        return;
-      }
-      const emojiMap = new Map<string, string>();
-      a.event.tags.forEach((t) => {
-        if (t.length >= 3 && t[0] === "emoji") {
-          emojiMap.set(t[1], t[2]);
+    subscribeReplacable(
+      state.rxNostr,
+      { kinds: [0], limit: 1, authors: [event.event.pubkey] },
+      (a: EventPacket) => {
+        const emojiMap = new Map<string, string>();
+        a.event.tags.forEach((t) => {
+          if (t.length >= 3 && t[0] === "emoji") {
+            emojiMap.set(t[1], t[2]);
+          }
+        });
+        const p: UserProfile = {
+          pubkey: a.event.pubkey,
+          name: "",
+          created_at: a.event.created_at,
+          emojiMap,
+        };
+        try {
+          const profileObj = JSON.parse(a.event.content);
+          p.name = profileObj.display_name || profileObj.name || "";
+          p.picture = profileObj.picture;
+        } catch (_e) {
+          p.name = a.event.pubkey;
         }
-      });
-      const p: UserProfile = {
-        pubkey: a.event.pubkey,
-        name: "",
-        created_at: a.event.created_at,
-        emojiMap,
-      };
-      try {
-        const profileObj = JSON.parse(a.event.content);
-        p.name = profileObj.display_name || profileObj.name || "";
-        p.picture = profileObj.picture;
-      } catch (_e) {
-        p.name = a.event.pubkey;
+        set(["profile", p]);
       }
-      set(["profile", p]);
-    });
-    rxReq.emit({ kinds: [0], limit: 1, authors: [event.event.pubkey] });
+    );
     prof = () => get[1];
   } else {
     prof = () => p.get[1];
@@ -485,7 +511,7 @@ function Note(
           <div class="flex w-full gap-1">
             <Show when={prof()} fallback={<div>loading ...</div>}>
               <img
-                src={prof()?.picture}
+                src={imageUrl(prof()!.picture)}
                 class="size-10 shrink-0 overflow-hidden rounded"
               />
             </Show>
@@ -498,7 +524,10 @@ function Note(
                         return <span>{section[1]}</span>;
                       } else {
                         return (
-                          <img class="inline-block h-5" src={section[2]} />
+                          <img
+                            class="inline-block h-5"
+                            src={imageUrl(section[2])}
+                          />
                         );
                       }
                     }}
