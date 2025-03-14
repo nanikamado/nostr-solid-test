@@ -6,11 +6,13 @@ import {
   createRxNostr,
   createRxForwardReq,
   createRxBackwardReq,
+  RxNostr,
+  EventPacket,
 } from "rx-nostr";
 // import * as Rxn from "rx-nostr";
 import { verifier } from "rx-nostr-crypto";
 import * as Rx from "rxjs";
-import { createStore } from "solid-js/store";
+import { createStore, SetStoreFunction } from "solid-js/store";
 
 type EventSignal = {
   event: NostrEvent;
@@ -44,6 +46,13 @@ const binarySearch = <T,>(arr: T[], f: (item: T) => boolean): number => {
 
 type NostrEventsProps = {
   npub: string;
+};
+
+type UserProfile = {
+  pubkey: string;
+  name: string;
+  picture?: string;
+  created_at: number;
 };
 
 function NostrEvents({ npub }: NostrEventsProps) {
@@ -225,7 +234,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
   onMount(() => {
     const rxReq = createRxForwardReq();
     rxNostr.use(rxReq).subscribe((a) => {
-      console.log(a.event.tags);
       const followees = a.event.tags.flatMap((t) =>
         t.length >= 2 && t[0] === "p" ? [t[1]] : []
       );
@@ -332,6 +340,11 @@ function NostrEvents({ npub }: NostrEventsProps) {
     load();
   });
 
+  const state = {
+    rxNostr,
+    profileMap: new Map<string, ProfileMapValue>(),
+  };
+
   return (
     <ul
       class="mt-4 overflow-scroll"
@@ -354,14 +367,29 @@ function NostrEvents({ npub }: NostrEventsProps) {
           // if (!event.realTime && ulElement && ulElement.scrollTop === 0) {
           //   ulElement.scroll({ top: 1 });
           // }
-          return Note(event, observer);
+          return Note(event, observer, state);
         }}
       </For>
     </ul>
   );
 }
 
-function Note(event: EventSignal, observer: IntersectionObserver) {
+type ProfileMapValueInner = ["profile", UserProfile] | ["loading"];
+type ProfileMapValue = {
+  get: ProfileMapValueInner;
+  set: SetStoreFunction<ProfileMapValueInner>;
+};
+
+type AppState = {
+  rxNostr: RxNostr;
+  profileMap: Map<string, ProfileMapValue>;
+};
+
+function Note(
+  event: EventSignal,
+  observer: IntersectionObserver,
+  state: AppState
+) {
   // onCleanup(() => {
   //   console.log("remove", event.event.created_at, event.event.id);
   // });
@@ -373,6 +401,42 @@ function Note(event: EventSignal, observer: IntersectionObserver) {
   onCleanup(() => {
     console.log("remove", event.event.created_at, event.event.id);
   });
+
+  let prof: () => UserProfile | undefined;
+  const p = state.profileMap.get(event.event.pubkey);
+
+  if (!p) {
+    const [get, set] = createStore<ProfileMapValueInner>(["loading"]);
+    state.profileMap.set(event.event.pubkey, { get, set });
+    const rxReq = createRxForwardReq();
+    state.rxNostr.use(rxReq).subscribe((a: EventPacket) => {
+      if (get[1] && a.event.created_at <= get[1].created_at) {
+        return;
+      }
+      let p;
+      try {
+        const profileObj = JSON.parse(a.event.content);
+        p = {
+          pubkey: event.event.pubkey,
+          name: profileObj.display_name || profileObj.name || "",
+          picture: profileObj.picture,
+          created_at: a.event.created_at,
+        };
+      } catch (_e) {
+        p = {
+          pubkey: event.event.pubkey,
+          name: event.event.pubkey,
+          created_at: a.event.created_at,
+        };
+      }
+      set(["profile", p]);
+    });
+    rxReq.emit({ kinds: [0], limit: 1, authors: [event.event.pubkey] });
+    prof = () => get[1];
+  } else {
+    prof = () => p.get[1];
+  }
+
   return (
     <div
       ref={(el) => {
@@ -387,7 +451,20 @@ function Note(event: EventSignal, observer: IntersectionObserver) {
       <div style="overflow: hidden;">
         <div class="border-t py-2 text-sm font-mono whitespace-pre-wrap">
           <div>{[...event.relays].join(", ")}</div>
-          <div>{JSON.stringify(event.event)}</div>
+          <div class="flex w-full gap-1">
+            <Show when={prof()} fallback={<div>loading ...</div>}>
+              <img
+                src={prof()?.picture}
+                class="size-10 shrink-0 overflow-hidden rounded"
+              />
+            </Show>
+            <div>
+              <Show when={prof()} fallback={<div>loading ...</div>}>
+                <div class="font-bold">{prof()!.name}</div>
+              </Show>
+              <div>{JSON.stringify(event.event)}</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
