@@ -841,7 +841,11 @@ function Note(
     >
       <div style="overflow: hidden;">
         <div class="border-t py-2 text-sm font-mono whitespace-pre-wrap">
-          <div>{[...event.relays].join(", ")}</div>
+          <div>
+            {[...event.relays]
+              .map((a) => a.replace(/^wss:\/\//, ""))
+              .join(", ")}
+          </div>
           <div class="flex w-full gap-1">
             <Show when={prof()} fallback={<div>loading ...</div>}>
               <img
