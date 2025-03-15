@@ -8,12 +8,14 @@ import {
   createRxBackwardReq,
   RxNostr,
   EventPacket,
-  LazyFilter,
+  isFiltered,
 } from "rx-nostr";
-// import * as Rxn from "rx-nostr";
 import { verifier } from "rx-nostr-crypto";
 import * as Rx from "rxjs";
 import { createStore, SetStoreFunction } from "solid-js/store";
+import * as NostrType from "nostr-typedef";
+import { createSignal } from "solid-js";
+import { Accessor } from "solid-js";
 
 type EventSignal = {
   event: NostrEvent;
@@ -23,10 +25,17 @@ type EventSignal = {
   possition?: "top" | "middle" | "bottom";
 };
 
+type WaitingBackwardReq = {
+  filter: NostrType.Filter;
+  callback: (e: EventPacket) => void;
+};
+
 type RelayState = {
   startSubscribing: () => void;
   stopSubscribing: () => void;
   loadOldevents: (until: number | undefined) => Promise<{ success: boolean }>;
+  concurrentReqs: number;
+  backwardReqBatch: WaitingBackwardReq[];
 };
 
 const binarySearch = <T,>(arr: T[], f: (item: T) => boolean): number => {
@@ -45,26 +54,134 @@ const binarySearch = <T,>(arr: T[], f: (item: T) => boolean): number => {
   return right;
 };
 
+const eqSet = <T,>(xs: Set<T>, ys: Set<T>) =>
+  xs.size === ys.size && [...xs].every((x) => ys.has(x));
+
+const mergeFilters = (
+  a: NostrType.Filter,
+  b: NostrType.Filter
+): NostrType.Filter | null => {
+  let differentKey;
+  if (
+    Object.entries(a).length !== Object.entries(b).length ||
+    a.since !== b.since ||
+    a.until !== b.until ||
+    a.search ||
+    b.search ||
+    a.limit ||
+    b.limit
+  ) {
+    return null;
+  }
+  for (const key in a) {
+    if (key === "since" || key === "until") {
+      continue;
+    }
+    const getAsSet = (f: NostrType.Filter, key: string) =>
+      new Set((f as Record<string, unknown>)[key] as unknown[]);
+    if (!eqSet(getAsSet(a, key), getAsSet(b, key))) {
+      if (differentKey) {
+        return null;
+      }
+      differentKey = key;
+    }
+  }
+  if (differentKey) {
+    return {
+      ...a,
+      [differentKey]: [
+        ...new Set([
+          ...((a as Record<string, unknown>)[differentKey] as unknown[]),
+          ...((b as Record<string, unknown>)[differentKey] as unknown[]),
+        ]),
+      ],
+    };
+  } else {
+    return null;
+  }
+};
+
+const MAX_CUNCURRENT_REQS = 10;
+
 const subscribeReplacable = (
-  rxNostr: RxNostr,
-  filter: LazyFilter,
+  state: AppState,
+  filter: NostrType.Filter,
   callback: (e: EventPacket) => void
 ) => {
-  const rxReq = createRxForwardReq();
-  let latestCreatedAt = 0;
-  let latestId = "x";
-  rxNostr.use(rxReq).subscribe((a) => {
-    if (
-      a.event.created_at < latestCreatedAt ||
-      (a.event.created_at === latestCreatedAt && a.event.id >= latestId)
-    ) {
-      return;
+  const latestCursors = new Map<string, { createdAt: number; id: string }>();
+  for (const [relay, relayState] of state.relays) {
+    const cb = (a: EventPacket) => {
+      if (!isFiltered(a.event, filter)) {
+        return;
+      }
+      const cursor = a.event.pubkey + ":" + a.event.kind;
+      let latest = latestCursors.get(cursor);
+      if (!latest) {
+        latest = { createdAt: 0, id: "x" };
+        latestCursors.set(cursor, latest);
+      }
+      if (
+        a.event.created_at < latest.createdAt ||
+        (a.event.created_at === latest.createdAt && a.event.id >= latest.id)
+      ) {
+        return;
+      }
+      latest.createdAt = a.event.created_at;
+      latest.id = a.event.id;
+      latestCursors.set(cursor, latest);
+      callback(a);
+    };
+    if (relayState.concurrentReqs >= MAX_CUNCURRENT_REQS) {
+      let merged = false;
+      for (const batch of relayState.backwardReqBatch) {
+        const m = mergeFilters(batch.filter, filter);
+        if (m) {
+          merged = true;
+          batch.filter = m;
+          const originalCb = batch.callback;
+          batch.callback = (e) => {
+            cb(e);
+            originalCb(e);
+          };
+          break;
+        }
+      }
+      if (!merged) {
+        relayState.backwardReqBatch.push({ filter, callback: cb });
+      }
+      continue;
     }
-    latestCreatedAt = a.event.created_at;
-    latestId = a.event.id;
-    callback(a);
-  });
-  rxReq.emit(filter);
+    relayState.concurrentReqs++;
+    const complete = () => {
+      relayState.concurrentReqs--;
+      if (relayState.concurrentReqs < MAX_CUNCURRENT_REQS) {
+        const batch = relayState.backwardReqBatch.shift();
+        if (batch) {
+          relayState.concurrentReqs++;
+          subscribe(batch.filter, batch.callback);
+        }
+      }
+    };
+    const subscribe = (
+      filter: NostrType.Filter,
+      cb: (e: EventPacket) => void
+    ) => {
+      const rxReq = createRxBackwardReq();
+      state.rxNostr.use(rxReq, { relays: [relay] }).subscribe({
+        next: cb,
+        complete: () => {
+          complete();
+        },
+        error: (e) => {
+          complete();
+          console.error(e);
+        },
+      });
+      rxReq.emit(filter);
+      rxReq.over();
+    };
+    subscribe(filter, cb);
+  }
 };
 
 type NostrEventsProps = {
@@ -77,6 +194,7 @@ type UserProfile = {
   picture?: string;
   created_at: number;
   emojiMap: Map<string, string>;
+  nip05?: string;
 };
 
 function NostrEvents({ npub }: NostrEventsProps) {
@@ -92,12 +210,23 @@ function NostrEvents({ npub }: NostrEventsProps) {
     verifier: verifier,
     disconnectTimeout: 10 * 60 * 1000,
   });
+  rxNostr.createAllMessageObservable().subscribe((a) => {
+    if (a.type === "NOTICE") {
+      console.error(a.from, ":", a.message);
+    }
+  });
   rxNostr.setDefaultRelays([
     "wss://relay.damus.io",
     "wss://relay.momostr.pink",
     "wss://nos.lol",
     "wss://yabu.me",
   ]);
+  const state = {
+    rxNostr,
+    profileMap: new Map<string, ProfileMapValue>(),
+    Nip05Verified: new Map<string, Accessor<boolean>>(),
+    relays: new Map<string, RelayState>(),
+  };
   // pool.addRelay("wss://relay.damus.io");
   // pool.addRelay("wss://relay.momostr.pink");
   // pool.addRelay("wss://nos.lol");
@@ -150,7 +279,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
   const followees: Promise<string[]> = new Promise((resolve) => {
     setFollowees = resolve;
   });
-  const relays = new Map<string, RelayState>();
   const relayState = (relay: string) => {
     let connection: false | Rx.Subscription = false;
     type LoadingOldEventsStatus = {
@@ -160,6 +288,8 @@ function NostrEvents({ npub }: NostrEventsProps) {
     };
     let loadingOldEvents: false | LoadingOldEventsStatus = false;
     return {
+      concurrentReqs: 0,
+      backwardReqBatch: [],
       startSubscribing: () => {
         if (connection) {
           return;
@@ -193,19 +323,20 @@ function NostrEvents({ npub }: NostrEventsProps) {
           loadingOldEvents = { until, resolves: [], rejects: [] };
           const rxReq = createRxBackwardReq();
           console.log("load old", relay, until);
+          let count = 0;
           rxNostr.use(rxReq, { relays: [relay] }).subscribe({
             next: (a) => {
               addEvent(a.event, relay, false, false);
+              count++;
             },
             complete: () => {
               const loadingOldEventsOld = loadingOldEvents;
               loadingOldEvents = false;
+              const success = count > 0;
               if (loadingOldEventsOld) {
-                loadingOldEventsOld.resolves.forEach((r) =>
-                  r({ success: true })
-                );
+                loadingOldEventsOld.resolves.forEach((r) => r({ success }));
               }
-              resolve({ success: true });
+              resolve({ success });
               return;
             },
             error: (e) => {
@@ -256,22 +387,29 @@ function NostrEvents({ npub }: NostrEventsProps) {
   let scrolling: undefined | number;
 
   onMount(() => {
-    subscribeReplacable(
-      rxNostr,
-      { kinds: [3], limit: 1, authors: [npub] },
-      (a) => {
+    for (const relay in rxNostr.getDefaultRelays()) {
+      state.relays.set(relay, relayState(relay));
+    }
+    subscribeReplacable(state, { kinds: [3, 10002], authors: [npub] }, (a) => {
+      if (a.event.kind === 3) {
         const followees = a.event.tags.flatMap((t) =>
           t.length >= 2 && t[0] === "p" ? [t[1]] : []
         );
         if (followees.length !== 0) {
           setFollowees(followees);
         }
+      } else if (a.event.kind === 10002) {
+        const rs = a.event.tags.flatMap((t) =>
+          t.length >= 2 && t[0] === "r" && t[2] !== "write" ? [t[1]] : []
+        );
+        rs.forEach((relay) => {
+          if (!state.relays.has(relay)) {
+            state.relays.set(relay, relayState(relay));
+            rxNostr.addDefaultRelays([relay]);
+          }
+        });
       }
-    );
-    for (const relay in rxNostr.getDefaultRelays()) {
-      const s = relayState(relay);
-      relays.set(relay, s);
-    }
+    });
     if (!ulElement) {
       return;
     }
@@ -286,11 +424,11 @@ function NostrEvents({ npub }: NostrEventsProps) {
       if (!start && !stop) {
         return;
       }
-      for (const [_relay, state] of relays) {
+      for (const [_relay, relayState] of state.relays) {
         if (start) {
-          state.startSubscribing();
+          relayState.startSubscribing();
         } else if (stop) {
-          state.stopSubscribing();
+          relayState.stopSubscribing();
         }
       }
       if (scrolling) {
@@ -318,7 +456,7 @@ function NostrEvents({ npub }: NostrEventsProps) {
   // let onScreenEventUpperbound = 0;
 
   const load = () => {
-    for (const [relay, state] of relays) {
+    for (const [relay, relayState] of state.relays) {
       const loadRelay = () => {
         let bottom = 0;
         let oldest = undefined;
@@ -334,7 +472,7 @@ function NostrEvents({ npub }: NostrEventsProps) {
         if (bottom > 10) {
           removeEventsFromBottom(bottom - 10, relay);
         } else if (bottom <= 3) {
-          state.loadOldevents(oldest).then(({ success }) => {
+          relayState.loadOldevents(oldest).then(({ success }) => {
             if (success) {
               loadRelay();
             }
@@ -365,11 +503,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
     }
     load();
   });
-
-  const state = {
-    rxNostr,
-    profileMap: new Map<string, ProfileMapValue>(),
-  };
 
   return (
     <ul
@@ -409,6 +542,8 @@ type ProfileMapValue = {
 type AppState = {
   rxNostr: RxNostr;
   profileMap: Map<string, ProfileMapValue>;
+  Nip05Verified: Map<string, Accessor<boolean>>;
+  relays: Map<string, RelayState>;
 };
 
 type ParseTextResult = (["text", string] | ["emoji", string, string])[];
@@ -438,8 +573,59 @@ const parseText = (
   return result;
 };
 
+const httpsProxy = (url: string) =>
+  "https://corsproxy.io/?url=" + encodeURIComponent(url);
+
 const imageUrl = (original: string | undefined) =>
-  original ? "https://corsproxy.io/?url=" + encodeURIComponent(original) : "";
+  original ? httpsProxy(original) : "";
+
+const parseNip05 = (nip05: string) => {
+  const s = nip05.split("@");
+  if (s.length < 2) {
+    return null;
+  }
+  const name = s.slice(0, s.length - 1).join("@");
+  const domain = s[s.length - 1];
+  return { name, domain, text: name === "_" ? "@" + domain : nip05 };
+};
+
+const verifyNip05 = async (name: string, domain: string, pubkey: string) => {
+  const res = await (
+    await fetch(
+      httpsProxy(`https://${domain}/.well-known/nostr.json?name=${name}`)
+    )
+  ).json();
+  const nip05Pubkey = res.names?.[name];
+  return nip05Pubkey === pubkey;
+};
+
+const Nip05 = (nip05: string | undefined, pubkey: string, state: AppState) => {
+  if (!nip05) {
+    return <span></span>;
+  }
+  const parsed = parseNip05(nip05);
+  if (!parsed) {
+    return <span></span>;
+  }
+  const { name, domain, text } = parsed;
+  if (state.Nip05Verified.get(pubkey) === undefined) {
+    const [verified, setVerified] = createSignal(false);
+    state.Nip05Verified.set(pubkey, verified);
+    verifyNip05(name, domain, pubkey)
+      .then((res) => {
+        setVerified(res);
+      })
+      .catch(() => {
+        setVerified(false);
+      });
+  }
+  return (
+    <Show when={state.Nip05Verified.get(pubkey)} fallback={<span></span>}>
+      <span>{text}</span>
+    </Show>
+  );
+};
+
 function Note(
   event: EventSignal,
   observer: IntersectionObserver,
@@ -464,8 +650,8 @@ function Note(
     const [get, set] = createStore<ProfileMapValueInner>(["loading"]);
     state.profileMap.set(event.event.pubkey, { get, set });
     subscribeReplacable(
-      state.rxNostr,
-      { kinds: [0], limit: 1, authors: [event.event.pubkey] },
+      state,
+      { kinds: [0], authors: [event.event.pubkey] },
       (a: EventPacket) => {
         const emojiMap = new Map<string, string>();
         a.event.tags.forEach((t) => {
@@ -483,6 +669,7 @@ function Note(
           const profileObj = JSON.parse(a.event.content);
           p.name = profileObj.display_name || profileObj.name || "";
           p.picture = profileObj.picture;
+          p.nip05 = profileObj.nip05;
         } catch (_e) {
           p.name = a.event.pubkey;
         }
@@ -517,21 +704,26 @@ function Note(
             </Show>
             <div>
               <Show when={prof()} fallback={<div>loading ...</div>}>
-                <div class="font-bold">
-                  <For each={parseText(prof()!.name, prof()!.emojiMap)}>
-                    {(section) => {
-                      if (section[0] === "text") {
-                        return <span>{section[1]}</span>;
-                      } else {
-                        return (
-                          <img
-                            class="inline-block h-5"
-                            src={imageUrl(section[2])}
-                          />
-                        );
-                      }
-                    }}
-                  </For>
+                <div>
+                  <span class="font-bold">
+                    <For each={parseText(prof()!.name, prof()!.emojiMap)}>
+                      {(section) => {
+                        if (section[0] === "text") {
+                          return <span>{section[1]}</span>;
+                        } else {
+                          return (
+                            <img
+                              class="inline-block h-5"
+                              src={imageUrl(section[2])}
+                            />
+                          );
+                        }
+                      }}
+                    </For>
+                  </span>
+                  <span class="ml-3">
+                    {Nip05(prof()?.nip05, event.event.pubkey, state)}
+                  </span>
                 </div>
               </Show>
               <div>{JSON.stringify(event.event)}</div>

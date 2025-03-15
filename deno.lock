@@ -22,6 +22,7 @@
     "npm:acorn-walk@^8.3.3": "8.3.4",
     "npm:acorn@^8.12.1": "8.14.0",
     "npm:lebab@^3.2.4": "3.2.6",
+    "npm:nostr-typedef@0.12": "0.12.0",
     "npm:resolve.exports@^2.0.2": "2.0.3",
     "npm:rx-nostr-crypto@^3.1.3": "3.1.3_rx-nostr@3.5.0",
     "npm:rx-nostr@^3.5.0": "3.5.0",
@@ -960,6 +961,9 @@
     "node-releases@2.0.19": {
       "integrity": "sha512-xxOWJsBKtzAq7DY0J+DTzuz58K8e7sJbdgwkbMWQe8UYB6ekmsQ45q0M/tJDsGaZmbC+l7n57UV8Hl5tHxO9uw=="
     },
+    "nostr-typedef@0.12.0": {
+      "integrity": "sha512-IVtVDzUaZDUdO1GbwVFbdMbrl9rYlRZOG/pVQDMXP9WR0Tbe+UkbtACgBlKthvXj6VMH31Bt2X7bjSplulHwlA=="
+    },
     "nostr-typedef@0.9.0": {
       "integrity": "sha512-nLTzhlYcRnLQGUJ5YfvGAUDyGFHjGH6Qozltl/wV3UXelmiUwjrwI8IIxQNkbgVMv+zmbFi/m1xKHxIvVfG09w=="
     },
@@ -1038,14 +1042,14 @@
         "@noble/curves",
         "@noble/hashes",
         "@scure/base",
-        "nostr-typedef",
+        "nostr-typedef@0.9.0",
         "rx-nostr"
       ]
     },
     "rx-nostr@3.5.0": {
       "integrity": "sha512-SFk/WTYKW1GAecyxLKNQlkdedrFfGDeT8nz8wTFriIqd2I6jSV5lm7jBkStcnB4ncDK7GOf4QoLcZfxA+OqaQw==",
       "dependencies": [
-        "nostr-typedef",
+        "nostr-typedef@0.9.0",
         "rxjs"
       ]
     },
@@ -1251,6 +1255,7 @@
         "npm:@solid-primitives/scroll@^2.1.0",
         "npm:@solidjs/router@~0.15.3",
         "npm:@tailwindcss/vite@^4.0.8",
+        "npm:nostr-typedef@0.12",
         "npm:rx-nostr-crypto@^3.1.3",
         "npm:rx-nostr@^3.5.0",
         "npm:rxjs@^7.8.2",
