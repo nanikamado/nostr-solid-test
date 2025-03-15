@@ -711,8 +711,13 @@ const parseText = (
   return result;
 };
 
-const httpsProxy = (url: string) =>
-  "https://corsproxy.io/?url=" + encodeURIComponent(url);
+const httpsProxy = (url: string) => {
+  if (url.startsWith("https://") || url.startsWith("http://")) {
+    return "https://corsproxy.io/?url=" + encodeURIComponent(url);
+  } else {
+    return url;
+  }
+};
 
 const imageUrl = (original: string | undefined) =>
   original ? httpsProxy(original) : "";
