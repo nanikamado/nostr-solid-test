@@ -16,6 +16,7 @@ import { createStore, SetStoreFunction } from "solid-js/store";
 import * as NostrType from "nostr-typedef";
 import { createSignal } from "solid-js";
 import { Accessor } from "solid-js";
+import { normalizeUrl, UrlMap } from "./util.ts";
 
 type EventSignal = {
   event: NostrEvent;
@@ -198,57 +199,26 @@ type NostrEventsProps = {
   npub: string;
 };
 
+type BridgedAccountProfile = {
+  id?: string;
+  bridgeSerever?: string;
+  bridgedFrom: string;
+};
+
 type UserProfile = {
   pubkey: string;
   name: string;
   picture?: string;
   created_at: number;
   emojiMap: Map<string, string>;
-  nip05?: string;
+  nip05?: ParsedNip05;
+  bridged?: BridgedAccountProfile;
 };
-
-const normalizeUrl = (url: string) => {
-  const u = new URL(url);
-  const s = u.toString();
-  if (u.pathname === "/" && s[s.length - 1] === "/") {
-    return s.slice(0, -1);
-  } else {
-    return s;
-  }
-};
-
-class UrlMap<T> {
-  urls: Map<string, T>;
-
-  constructor() {
-    this.urls = new Map();
-  }
-  get(url: string): T | undefined {
-    return this.urls.get(normalizeUrl(url));
-  }
-  set(url: string, value: T) {
-    this.urls.set(normalizeUrl(url), value);
-  }
-  [Symbol.iterator]() {
-    return this.urls[Symbol.iterator]();
-  }
-  has(url: string) {
-    return this.urls.has(normalizeUrl(url));
-  }
-  size() {
-    return this.urls.size;
-  }
-}
 
 function NostrEvents({ npub }: NostrEventsProps) {
   const [events, setEvents] = createStore<EventSignal[]>([]);
 
   const webSeckets: WebSocket[] = [];
-  // let afterFirstEose = false;
-  // let eventLoading = false;
-  // let eventSubscribing = true;
-  // let newestEventTime = 0;
-  // const pool = new RelayPool();
   const rxNostr = createRxNostr({
     verifier: verifier,
     disconnectTimeout: 10 * 60 * 1000,
@@ -270,10 +240,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
     Nip05Verified: new Map<string, Accessor<boolean>>(),
     relays: new UrlMap<RelayState>(),
   };
-  // pool.addRelay("wss://relay.damus.io");
-  // pool.addRelay("wss://relay.momostr.pink");
-  // pool.addRelay("wss://nos.lol");
-  // let connection: undefined | Rx.Subscription;
   const addEvent = (
     event: NostrEvent,
     relay: string,
@@ -722,17 +688,27 @@ const httpsProxy = (url: string) => {
 const imageUrl = (original: string | undefined) =>
   original ? httpsProxy(original) : "";
 
-const parseNip05 = (nip05: string) => {
+type ParsedNip05 = {
+  name: string;
+  domain: string;
+  text: string;
+};
+
+const parseNip05 = (nip05: string): ParsedNip05 | null => {
   const s = nip05.split("@");
   if (s.length < 2) {
     return null;
   }
   const name = s.slice(0, s.length - 1).join("@");
   const domain = s[s.length - 1];
-  return { name, domain, text: name === "_" ? "@" + domain : nip05 };
+  return { name: name, domain, text: name === "_" ? "@" + domain : nip05 };
 };
 
-const verifyNip05 = async (name: string, domain: string, pubkey: string) => {
+const verifyNip05Inner = async (
+  name: string,
+  domain: string,
+  pubkey: string
+) => {
   const res = await (
     await fetch(
       httpsProxy(`https://${domain}/.well-known/nostr.json?name=${name}`)
@@ -742,19 +718,16 @@ const verifyNip05 = async (name: string, domain: string, pubkey: string) => {
   return nip05Pubkey === pubkey;
 };
 
-const Nip05 = (nip05: string | undefined, pubkey: string, state: AppState) => {
-  if (!nip05) {
-    return <span></span>;
-  }
-  const parsed = parseNip05(nip05);
-  if (!parsed) {
-    return <span></span>;
-  }
-  const { name, domain, text } = parsed;
+const verifyNip05 = (
+  nip05: ParsedNip05,
+  pubkey: string,
+  state: AppState
+): Accessor<boolean> => {
+  const { name, domain } = nip05;
   if (state.Nip05Verified.get(pubkey) === undefined) {
     const [verified, setVerified] = createSignal(false);
     state.Nip05Verified.set(pubkey, verified);
-    verifyNip05(name, domain, pubkey)
+    verifyNip05Inner(name, domain, pubkey)
       .then((res) => {
         setVerified(res);
       })
@@ -762,11 +735,7 @@ const Nip05 = (nip05: string | undefined, pubkey: string, state: AppState) => {
         setVerified(false);
       });
   }
-  return (
-    <Show when={state.Nip05Verified.get(pubkey)} fallback={<span></span>}>
-      <span>{text}</span>
-    </Show>
-  );
+  return state.Nip05Verified.get(pubkey)!;
 };
 
 const makeProfileFromEvent = (event: NostrType.Event): UserProfile => {
@@ -786,11 +755,73 @@ const makeProfileFromEvent = (event: NostrType.Event): UserProfile => {
     const profileObj = JSON.parse(event.content);
     p.name = profileObj.display_name || profileObj.name || "";
     p.picture = profileObj.picture;
-    p.nip05 = profileObj.nip05;
+    p.nip05 = profileObj.nip05 && parseNip05(profileObj.nip05);
   } catch (_e) {
     p.name = event.pubkey;
   }
   return p;
+};
+
+const getBridgeInfo = (
+  event: NostrType.Event,
+  nip05?: ParsedNip05
+): BridgedAccountProfile | undefined => {
+  let bridgeSerever;
+  let id;
+  if (nip05 && nip05.domain === "momostr.pink") {
+    bridgeSerever = nip05.domain;
+    const sections = nip05.name.split("_at_");
+    id =
+      "@" +
+      sections.slice(0, sections.length - 1).join("_at_") +
+      "@" +
+      sections[sections.length - 1];
+  } else if (nip05 && nip05.domain.endsWith(".mostr.pub")) {
+    bridgeSerever = "mostr.pub";
+    id =
+      "@" +
+      nip05.name +
+      "@" +
+      nip05.domain.replace(/\.mostr\.pub$/, "").replace("-", ".");
+  }
+  const activitypub = event.tags.find(
+    (t) => t[0] === "proxy" && t[2] === "activitypub"
+  );
+  const atproto = event.tags.find(
+    (t) => t[0] === "proxy" && t[2] === "atproto"
+  );
+  const web = event.tags.find((t) => t[0] === "proxy" && t[2] === "web");
+  // const id = web?.[1] || atproto?.[1] || activitypub?.[1];
+  const bridgedFrom =
+    (atproto?.[2] && "Bluesky") ||
+    (activitypub?.[2] && "Fediverse") ||
+    (web?.[2] && "Web");
+  if (!bridgedFrom) {
+    return undefined;
+  }
+  return { id, bridgeSerever, bridgedFrom };
+};
+
+const UserId = (props: {
+  event: NostrType.Event;
+  nip05?: ParsedNip05;
+  state: AppState;
+}) => {
+  const bridged = getBridgeInfo(props.event, props.nip05);
+  const nip05IsVarid = props.nip05
+    ? verifyNip05(props.nip05, props.event.pubkey, props.state)
+    : () => false;
+  return (
+    <Show when={nip05IsVarid()}>
+      <Show when={bridged} fallback={<span>{props.nip05!.text}</span>}>
+        <span>{bridged!.id ? bridged!.id : props.nip05!.text}</span>
+        <span class="opacity-50 ml-3">
+          bridged from {bridged!.bridgedFrom}
+          {bridged!.bridgeSerever ? " by " + bridged!.bridgeSerever : ""}
+        </span>
+      </Show>
+    </Show>
+  );
 };
 
 function Note(
@@ -873,7 +904,11 @@ function Note(
                     </For>
                   </span>
                   <span class="ml-3">
-                    {Nip05(prof()?.nip05, event.event.pubkey, state)}
+                    <UserId
+                      event={event.event}
+                      nip05={prof()?.nip05}
+                      state={state}
+                    ></UserId>
                   </span>
                 </div>
               </Show>
