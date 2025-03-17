@@ -1,5 +1,5 @@
 import "./Events.css";
-import { onCleanup, onMount, For, Show } from "solid-js";
+import { onCleanup, onMount, For, Show, createRoot } from "solid-js";
 import { NostrEvent } from "./nostr.ts";
 // import { Channel } from "./channel.ts";
 import {
@@ -17,6 +17,8 @@ import * as NostrType from "nostr-typedef";
 import { createSignal } from "solid-js";
 import { Accessor } from "solid-js";
 import { normalizeUrl, UrlMap } from "./util.ts";
+import useDatePulser from "./utils/useDatePulser.ts";
+import { formatRelative } from "./utils/formatDate.ts";
 
 type EventSignal = {
   event: NostrEvent;
@@ -105,13 +107,12 @@ const mergeFilters = (
 
 const MAX_CUNCURRENT_REQS = 10;
 
-const subscribeReplacable = (
+const getEvents = (
   state: AppState,
   filter: NostrType.Filter,
   callback: (e: EventPacket) => void,
   complete: () => void = () => {}
 ) => {
-  const latestCursors = new Map<string, { createdAt: number; id: string }>();
   let count = state.relays.size();
   const countComplete = () => {
     if (--count === 0) {
@@ -123,21 +124,6 @@ const subscribeReplacable = (
       if (!isFiltered(a.event, filter)) {
         return;
       }
-      const cursor = a.event.pubkey + ":" + a.event.kind;
-      let latest = latestCursors.get(cursor);
-      if (!latest) {
-        latest = { createdAt: 0, id: "x" };
-        latestCursors.set(cursor, latest);
-      }
-      if (
-        a.event.created_at < latest.createdAt ||
-        (a.event.created_at === latest.createdAt && a.event.id >= latest.id)
-      ) {
-        return;
-      }
-      latest.createdAt = a.event.created_at;
-      latest.id = a.event.id;
-      latestCursors.set(cursor, latest);
       callback(a);
     };
     if (relayState.concurrentReqs >= MAX_CUNCURRENT_REQS) {
@@ -193,6 +179,38 @@ const subscribeReplacable = (
     };
     subscribe(filter, cb, countComplete);
   }
+};
+
+const subscribeReplacable = (
+  state: AppState,
+  filter: NostrType.Filter,
+  callback: (e: EventPacket) => void,
+  complete: () => void = () => {}
+) => {
+  const latestCursors = new Map<string, { createdAt: number; id: string }>();
+  return getEvents(
+    state,
+    filter,
+    (a) => {
+      const cursor = a.event.pubkey + ":" + a.event.kind;
+      let latest = latestCursors.get(cursor);
+      if (!latest) {
+        latest = { createdAt: 0, id: "x" };
+        latestCursors.set(cursor, latest);
+      }
+      if (
+        a.event.created_at < latest.createdAt ||
+        (a.event.created_at === latest.createdAt && a.event.id >= latest.id)
+      ) {
+        return;
+      }
+      latest.createdAt = a.event.created_at;
+      latest.id = a.event.id;
+      latestCursors.set(cursor, latest);
+      return callback(a);
+    },
+    complete
+  );
 };
 
 type NostrEventsProps = {
@@ -384,7 +402,7 @@ function NostrEvents({ npub }: NostrEventsProps) {
     type LoadingOldEventsStatus = {
       until: number | undefined;
       resolves: ((a: { success: boolean }) => void)[];
-      rejects: (() => void)[];
+      rejects: ((e: unknown) => void)[];
     };
     let loadingOldEvents: false | LoadingOldEventsStatus = false;
     return {
@@ -422,7 +440,7 @@ function NostrEvents({ npub }: NostrEventsProps) {
           }
           loadingOldEvents = { until, resolves: [], rejects: [] };
           const rxReq = createRxBackwardReq();
-          console.log("load old", relay, until);
+          console.log("load old ...", relay, until, loadingOldEvents);
           let count = 0;
           rxNostr.use(rxReq, { relays: [relay] }).subscribe({
             next: (a) => {
@@ -430,6 +448,7 @@ function NostrEvents({ npub }: NostrEventsProps) {
               count++;
             },
             complete: () => {
+              console.log("... load", relay, until, loadingOldEvents);
               const loadingOldEventsOld = loadingOldEvents;
               loadingOldEvents = false;
               const success = count > 0;
@@ -440,10 +459,11 @@ function NostrEvents({ npub }: NostrEventsProps) {
               return;
             },
             error: (e) => {
+              console.log("... failed to load", relay, until);
               const loadingOldEventsOld = loadingOldEvents;
               loadingOldEvents = false;
               if (loadingOldEventsOld) {
-                loadingOldEventsOld.rejects.forEach((r) => r());
+                loadingOldEventsOld.rejects.forEach((r) => r(e));
               }
               reject(e);
               return;
@@ -453,7 +473,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
             if (onScreenEventLowerbound !== Number.MAX_SAFE_INTEGER) {
               rxReq.emit({
                 kinds: [1],
-                limit: 10_000,
                 until: until,
                 since: onScreenEventLowerbound,
                 authors,
@@ -462,7 +481,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
             if (until) {
               rxReq.emit({
                 kinds: [1],
-                limit: 1_000,
                 until: until,
                 since: until,
                 authors,
@@ -791,7 +809,6 @@ const getBridgeInfo = (
     (t) => t[0] === "proxy" && t[2] === "atproto"
   );
   const web = event.tags.find((t) => t[0] === "proxy" && t[2] === "web");
-  // const id = web?.[1] || atproto?.[1] || activitypub?.[1];
   const bridgedFrom =
     (atproto?.[2] && "Bluesky") ||
     (activitypub?.[2] && "Fediverse") ||
@@ -824,11 +841,114 @@ const UserId = (props: {
   );
 };
 
+const TextWithEmoji = (props: {
+  text: string;
+  emojiMap: Map<string, string>;
+}) => (
+  <For each={parseText(props.text, props.emojiMap)}>
+    {(section) => {
+      if (section[0] === "text") {
+        return <span>{section[1]}</span>;
+      } else {
+        return <img class="inline-block h-5" src={imageUrl(section[2])} />;
+      }
+    }}
+  </For>
+);
+
+const DateText = (props: { date: number }) => {
+  const currentDateHigh = createRoot(() =>
+    useDatePulser(() => ({ interval: 7000 }))
+  );
+  const s = formatRelative(new Date(props.date * 1000), currentDateHigh());
+  return <span>{s}</span>;
+};
+
+const getParent = (
+  state: AppState,
+  event: NostrType.Event,
+  resultSetter: SetStoreFunction<ThreadParentStore>
+) => {
+  let root;
+  let reply;
+  for (const t of event.tags) {
+    if (t[3] === "reply") {
+      reply = t[1];
+    } else if (t[3] === "root") {
+      root = t[1];
+    }
+  }
+  const parent = reply || root;
+  if (!parent) {
+    return Promise.resolve(undefined);
+  }
+  getEvents(
+    state,
+    { ids: [parent] },
+    (e) => {
+      resultSetter("value", (prev) => {
+        if (prev) {
+          prev.relays.push(e.from);
+          return {
+            event: e.event,
+            relays: [...prev.relays, e.from],
+            transition: false,
+            realTime: false,
+          };
+        } else {
+          return {
+            event: e.event,
+            relays: [e.from],
+            transition: false,
+            realTime: false,
+          };
+        }
+      });
+    },
+    () => {}
+  );
+};
+
+type ThreadParentStore = { value: null | EventSignal };
+
 function Note(
   event: EventSignal,
   observer: IntersectionObserver,
   state: AppState
 ) {
+  const [threadParent, setThreadParent] = createStore<ThreadParentStore>({
+    value: null,
+  });
+  getParent(state, event.event, setThreadParent);
+
+  return (
+    <div
+      ref={(el) => {
+        observer.observe(el);
+      }}
+      class="grid grid-animated-ul"
+      classList={{ transition: event.transition }}
+      style="overflow-wrap: anywhere;"
+      data-event-id={event.event.id}
+      data-real-time={event.realTime}
+    >
+      <div style="overflow: hidden;" class="border-t">
+        <NoteSingle
+          event={event}
+          state={state}
+          threadParent={threadParent}
+        ></NoteSingle>
+      </div>
+    </div>
+  );
+}
+
+function NoteSingle(props: {
+  event: EventSignal;
+  state: AppState;
+  threadParent?: ThreadParentStore;
+}) {
+  const { event, state, threadParent } = props;
   // onCleanup(() => {
   //   console.log("remove", event.event.created_at, event.event.id);
   // });
@@ -860,62 +980,43 @@ function Note(
   }
 
   return (
-    <div
-      ref={(el) => {
-        observer.observe(el);
-      }}
-      class="grid grid-animated-ul"
-      classList={{ transition: event.transition }}
-      style="overflow-wrap: anywhere;"
-      data-event-id={event.event.id}
-      data-real-time={event.realTime}
-    >
-      <div style="overflow: hidden;">
-        <div class="border-t py-2 text-sm font-mono whitespace-pre-wrap">
-          <div>
-            {[...event.relays]
-              .map((a) => a.replace(/^wss:\/\//, ""))
-              .join(", ")}
-          </div>
-          <div class="flex w-full gap-1">
-            <Show when={prof()} fallback={<div>loading ...</div>}>
-              <img
-                src={imageUrl(prof()!.picture)}
-                class="size-10 shrink-0 overflow-hidden rounded"
-              />
-            </Show>
+    <div class="py-2 text-sm font-mono whitespace-pre-wrap">
+      <div class="flex w-full gap-1">
+        <Show when={prof()} fallback={<div>loading ...</div>}>
+          <img
+            src={imageUrl(prof()!.picture)}
+            class="size-10 shrink-0 overflow-hidden rounded"
+          />
+        </Show>
+        <div>
+          <Show when={prof()} fallback={<div>loading ...</div>}>
             <div>
-              <Show when={prof()} fallback={<div>loading ...</div>}>
-                <div>
-                  <span class="font-bold">
-                    <For each={parseText(prof()!.name, prof()!.emojiMap)}>
-                      {(section) => {
-                        if (section[0] === "text") {
-                          return <span>{section[1]}</span>;
-                        } else {
-                          return (
-                            <img
-                              class="inline-block h-5"
-                              src={imageUrl(section[2])}
-                            />
-                          );
-                        }
-                      }}
-                    </For>
-                  </span>
-                  <span class="ml-3">
-                    <UserId
-                      event={event.event}
-                      nip05={prof()?.nip05}
-                      state={state}
-                    ></UserId>
-                  </span>
-                </div>
-              </Show>
-              <div>{JSON.stringify(event.event)}</div>
+              <span class="font-bold">
+                <TextWithEmoji
+                  text={prof()!.name}
+                  emojiMap={prof()!.emojiMap}
+                ></TextWithEmoji>
+              </span>
+              <span class="ml-3">
+                <UserId
+                  event={event.event}
+                  nip05={prof()?.nip05}
+                  state={state}
+                ></UserId>
+              </span>
+              <span class="float-end">
+                <DateText date={event.event.created_at}></DateText>
+              </span>
             </div>
-          </div>
+          </Show>
+          <Show when={threadParent && threadParent.value}>
+            <NoteSingle event={threadParent!.value!} state={state}></NoteSingle>
+          </Show>
+          <div>{JSON.stringify(event.event)}</div>
         </div>
+      </div>
+      <div>
+        {[...event.relays].map((a) => a.replace(/^wss:\/\//, "")).join(", ")}
       </div>
     </div>
   );
