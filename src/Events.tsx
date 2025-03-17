@@ -1021,10 +1021,12 @@ function NoteSingle(props: {
             <NoteSingle event={threadParent!.value!} state={state}></NoteSingle>
           </Show>
           <div>{JSON.stringify(event.event)}</div>
+          <div class="opacity-50 mt-0.5">
+            {[...event.relays]
+              .map((a) => a.replace(/^wss:\/\//, ""))
+              .join(", ")}
+          </div>
         </div>
-      </div>
-      <div>
-        {[...event.relays].map((a) => a.replace(/^wss:\/\//, "")).join(", ")}
       </div>
     </div>
   );
