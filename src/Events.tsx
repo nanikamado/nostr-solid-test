@@ -957,11 +957,12 @@ function NoteSingle(props: {
   threadParent?: ThreadParentStore;
 }) {
   const { event, state, threadParent } = props;
-  // onCleanup(() => {
-  //   console.log("remove", event.event.created_at, event.event.id);
-  // });
-  // let element: HTMLElement | null = null;
-  // const originalScrollTop = parent.scrollTop;
+  const emojiMap = new Map<string, string>();
+  event.event.tags.forEach((t) => {
+    if (t.length >= 3 && t[0] === "emoji") {
+      emojiMap.set(t[1], t[2]);
+    }
+  });
   onMount(() => {
     console.log("add", event.event.created_at, event.event.id);
   });
@@ -988,7 +989,7 @@ function NoteSingle(props: {
   }
 
   return (
-    <div class="py-2 text-sm font-mono whitespace-pre-wrap">
+    <div class="py-2 text-sm whitespace-pre-wrap">
       <div class="flex w-full gap-1">
         <Show when={prof()} fallback={<div>loading ...</div>}>
           <img
@@ -998,7 +999,7 @@ function NoteSingle(props: {
         </Show>
         <div>
           <Show when={prof()} fallback={<div>loading ...</div>}>
-            <div>
+            <div class="flow-root">
               <span class="font-bold">
                 <TextWithEmoji
                   text={prof()!.name}
@@ -1020,7 +1021,11 @@ function NoteSingle(props: {
           <Show when={threadParent && threadParent.value}>
             <NoteSingle event={threadParent!.value!} state={state}></NoteSingle>
           </Show>
-          <div>{JSON.stringify(event.event)}</div>
+          <TextWithEmoji
+            text={event.event.content}
+            emojiMap={emojiMap}
+          ></TextWithEmoji>
+          <div class="font-mono">{JSON.stringify(event.event)}</div>
           <div class="opacity-50 mt-0.5">
             {[...event.relays]
               .map((a) => a.replace(/^wss:\/\//, ""))
