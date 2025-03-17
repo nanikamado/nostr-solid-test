@@ -240,6 +240,10 @@ function NostrEvents({ npub }: NostrEventsProps) {
   const rxNostr = createRxNostr({
     verifier: verifier,
     disconnectTimeout: 10 * 60 * 1000,
+    skipVerify: true,
+    skipValidateFilterMatching: true,
+    skipExpirationCheck: true,
+    skipFetchNip11: true,
   });
   rxNostr.createAllMessageObservable().subscribe((a) => {
     if (a.type === "NOTICE") {
@@ -267,7 +271,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
     if (normalizeUrl(relay) !== relay) {
       throw new Error(`invalid relay "${relay}"`);
     }
-    const e = events.findIndex((e) => e.event.id == event.id);
     const right = binarySearch(
       events,
       (e) =>
@@ -275,13 +278,18 @@ function NostrEvents({ npub }: NostrEventsProps) {
         (e.event.created_at === event.created_at && e.event.id > event.id)
     );
     if (events[right - 1]?.event.id === event.id) {
+      const e = right - 1;
       if (events[e].relays.indexOf(relay) === -1) {
         setEvents(e, "relays", events[e].relays.length, relay);
       }
     } else {
-      const newE = { event: event, transition, relays: [relay], realTime };
-      const es = [...events.slice(0, right), newE, ...events.slice(right)];
-      setEvents(es);
+      verifier(event).then((valid) => {
+        if (valid) {
+          const newE = { event: event, transition, relays: [relay], realTime };
+          const es = [...events.slice(0, right), newE, ...events.slice(right)];
+          setEvents(es);
+        }
+      });
     }
   };
   const removeEvent = (i: number, relay: string) => {
