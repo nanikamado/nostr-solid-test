@@ -314,97 +314,100 @@ function NostrEvents({ npub }: NostrEventsProps) {
   };
   let onScreenEventLowerbound = Number.MAX_SAFE_INTEGER;
   let setFollowees: (a: string[]) => void;
+  const isHex64 = (a: string) => /^[0-9a-f]{64}$/.test(a);
   const followees: Promise<string[]> = new Promise((resolve) => {
-    setFollowees = resolve;
+    setFollowees = (fs) => resolve(fs.filter(isHex64));
   });
-  followees.then((authors) => {
-    for (const a of authors) {
-      const [profile, setProfile] = createStore<ProfileMapValueInner>([
-        "loading",
-      ]);
-      state.profileMap.set(a, { get: profile, set: setProfile });
-    }
-    const relayCount = new Map<string, number>();
-    const preferedRelays: string[][] = [];
-    console.log("add more relays");
-    let done = 0;
-    subscribeReplacable(
-      state,
-      { kinds: [0, 10_002], authors },
-      (a) => {
-        if (a.event.kind === 0) {
-          state.profileMap
-            .get(a.event.pubkey)
-            ?.set(["profile", makeProfileFromEvent(a.event)]);
-        } else if (a.event.kind === 10_002) {
-          const rs = [
-            ...new Set(
-              a.event.tags.flatMap((t) =>
-                t.length >= 2 && t[0] === "r" && t[2] !== "read"
-                  ? [normalizeUrl(t[1])]
-                  : []
-              )
-            ),
-          ];
-          preferedRelays.push(rs);
-          for (const r of rs) {
-            const c = relayCount.get(r) || 0;
-            relayCount.set(r, c + 1);
-          }
-        }
-      },
-      async () => {
-        if (done) {
-          throw new Error("should not be called");
-        }
-        console.log("complete!!!!", done++);
-        for (const rs of preferedRelays) {
-          if (rs.length && !rs.find((r) => state.relays.has(r))) {
-            rs.sort(
-              (a, b) => (relayCount.get(a) || 0) - (relayCount.get(b) || 0)
-            );
-            rs.reverse();
+  const addMoreRelays = () =>
+    followees.then((authors) => {
+      console.log("adding more relays", authors);
+      for (const a of authors) {
+        const [profile, setProfile] = createStore<ProfileMapValueInner>([
+          "loading",
+        ]);
+        state.profileMap.set(a, { get: profile, set: setProfile });
+      }
+      const relayCount = new Map<string, number>();
+      const preferedRelays: string[][] = [];
+      console.log("add more relays");
+      let done = 0;
+      subscribeReplacable(
+        state,
+        { kinds: [0, 10_002], authors },
+        (a) => {
+          if (a.event.kind === 0) {
+            state.profileMap
+              .get(a.event.pubkey)
+              ?.set(["profile", makeProfileFromEvent(a.event)]);
+          } else if (a.event.kind === 10_002) {
+            const rs = [
+              ...new Set(
+                a.event.tags.flatMap((t) =>
+                  t.length >= 2 && t[0] === "r" && t[2] !== "read"
+                    ? [normalizeUrl(t[1])]
+                    : []
+                )
+              ),
+            ];
+            preferedRelays.push(rs);
             for (const r of rs) {
-              if (!relayCount.get(r)) {
-                break;
-              }
-              console.log("test relay", r, relayCount.get(r));
-              const req = createRxBackwardReq();
-              const added = await new Promise((resolve) => {
-                rxNostr
-                  .use(req, { relays: [rs[0]] })
-                  .pipe(Rx.timeout(10_000))
-                  .subscribe({
-                    next: () => {
-                      console.log("add max relay", r, relayCount.get(r));
-                      state.relays.set(r, relayState(r));
-                      rxNostr.addDefaultRelays([r]);
-                      resolve(true);
-                    },
-                    error: (e) => {
-                      console.log(
-                        "could not use relay",
-                        r,
-                        relayCount.get(r),
-                        e
-                      );
-                      resolve(false);
-                    },
-                  });
-                req.emit({ kinds: [10_002], limit: 1 });
-                req.over();
-              });
-              if (added) {
-                break;
-              } else {
-                relayCount.delete(r);
+              const c = relayCount.get(r) || 0;
+              relayCount.set(r, c + 1);
+            }
+          }
+        },
+        async () => {
+          if (done) {
+            throw new Error("should not be called");
+          }
+          console.log("complete!!!!", done++);
+          for (const rs of preferedRelays) {
+            if (rs.length && !rs.find((r) => state.relays.has(r))) {
+              rs.sort(
+                (a, b) => (relayCount.get(a) || 0) - (relayCount.get(b) || 0)
+              );
+              rs.reverse();
+              for (const r of rs) {
+                if (!relayCount.get(r)) {
+                  break;
+                }
+                console.log("test relay", r, relayCount.get(r));
+                const req = createRxBackwardReq();
+                const added = await new Promise((resolve) => {
+                  rxNostr
+                    .use(req, { relays: [rs[0]] })
+                    .pipe(Rx.timeout(10_000))
+                    .subscribe({
+                      next: () => {
+                        console.log("add max relay", r, relayCount.get(r));
+                        state.relays.set(r, relayState(r));
+                        rxNostr.addDefaultRelays([r]);
+                        resolve(true);
+                      },
+                      error: (e) => {
+                        console.log(
+                          "could not use relay",
+                          r,
+                          relayCount.get(r),
+                          e
+                        );
+                        resolve(false);
+                      },
+                    });
+                  req.emit({ kinds: [10_002], limit: 1 });
+                  req.over();
+                });
+                if (added) {
+                  break;
+                } else {
+                  relayCount.delete(r);
+                }
               }
             }
           }
         }
-      }
-    );
-  });
+      );
+    });
   const relayState = (relay: string) => {
     let connection: false | Rx.Subscription = false;
     type LoadingOldEventsStatus = {
@@ -566,6 +569,7 @@ function NostrEvents({ npub }: NostrEventsProps) {
     };
     ulElement.onscroll = onscroll;
     onscroll();
+    addMoreRelays();
   });
 
   onCleanup(() => {
@@ -899,7 +903,7 @@ const getParent = (
           prev.relays.push(e.from);
           return {
             event: e.event,
-            relays: [...prev.relays, e.from],
+            relays: prev.relays,
             transition: false,
             realTime: false,
           };
