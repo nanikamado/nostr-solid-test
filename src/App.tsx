@@ -8,8 +8,8 @@ function Home() {
   try {
     const id = RxNostr.toHex(params.npub);
     return (
-      <div class="h-dvh px-10 mx-auto grid grid-cols-1 grid-rows-[3rem_1fr] p-10">
-        <h2>Nost Events</h2>
+      <div class="h-dvh mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
+        <h2 class="mt-3">Nost Events</h2>
         <NostrEvents npub={id} />
       </div>
     );
