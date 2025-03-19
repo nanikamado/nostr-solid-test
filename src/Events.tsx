@@ -34,13 +34,183 @@ type WaitingBackwardReq = {
   complete: () => void;
 };
 
-type RelayState = {
-  startSubscribing: () => void;
-  stopSubscribing: () => void;
-  loadOldevents: (until: number | undefined) => Promise<{ success: boolean }>;
-  concurrentReqs: number;
-  backwardReqBatch: WaitingBackwardReq[];
+type LoadingOldEventsStatus = {
+  until: number | undefined;
+  resolves: ((a: { success: boolean }) => void)[];
+  rejects: ((e: unknown) => void)[];
 };
+
+class RelayState {
+  concurrentReqs: number = 0;
+  backwardReqBatch: WaitingBackwardReq[] = [];
+  #connection: false | Rx.Subscription = false;
+  #loadingOldEvents: false | LoadingOldEventsStatus = false;
+  #followees: Promise<string[]>;
+  #rxNostr: RxNostr;
+  #addEvent: (
+    event: NostrEvent,
+    relay: string,
+    transition: boolean,
+    realTime: boolean
+  ) => void;
+  #onScreenEventLowerbound: { value: number };
+
+  constructor(
+    public relay: string,
+    followees: Promise<string[]>,
+    rxNostr: RxNostr,
+    addEvent: (
+      event: NostrEvent,
+      relay: string,
+      transition: boolean,
+      realTime: boolean
+    ) => void,
+    onScreenEventLowerbound: { value: number }
+  ) {
+    this.#followees = followees;
+    this.#rxNostr = rxNostr;
+    this.#addEvent = addEvent;
+    this.#onScreenEventLowerbound = onScreenEventLowerbound;
+  }
+
+  startSubscribing() {
+    if (this.#connection) {
+      return;
+    }
+    this.#followees.then((authors) => {
+      const rxReq = createRxForwardReq();
+      this.#connection = this.#rxNostr
+        .use(rxReq, { relays: [this.relay] })
+        .subscribe((a) => {
+          this.#addEvent(a.event, this.relay, true, true);
+        });
+      rxReq.emit({ kinds: [1], limit: 11, authors });
+    });
+  }
+
+  stopSubscribing() {
+    if (!this.#connection) {
+      return;
+    }
+    console.log("stop sub", this.relay);
+    this.#connection?.unsubscribe();
+    this.#connection = false;
+  }
+
+  loadOldevents(until: number | undefined): Promise<{ success: boolean }> {
+    return new Promise<{ success: boolean }>((resolve, reject) => {
+      if (this.#loadingOldEvents) {
+        console.log("skip load old", this.relay, until);
+        this.#loadingOldEvents.resolves.push(resolve);
+        this.#loadingOldEvents.rejects.push(reject);
+        return;
+      }
+      this.#loadingOldEvents = { until, resolves: [], rejects: [] };
+      const rxReq = createRxBackwardReq();
+      console.log("load old ...", this.relay, until, this.#loadingOldEvents);
+      let count = 0;
+      this.#rxNostr.use(rxReq, { relays: [this.relay] }).subscribe({
+        next: (a) => {
+          this.#addEvent(a.event, this.relay, false, false);
+          count++;
+        },
+        complete: () => {
+          console.log("... load", this.relay, until, this.#loadingOldEvents);
+          const loadingOldEventsOld = this.#loadingOldEvents;
+          this.#loadingOldEvents = false;
+          const success = count > 0;
+          if (loadingOldEventsOld) {
+            loadingOldEventsOld.resolves.forEach((r) => r({ success }));
+          }
+          resolve({ success });
+          return;
+        },
+        error: (e) => {
+          console.log("... failed to load", this.relay, until);
+          const loadingOldEventsOld = this.#loadingOldEvents;
+          this.#loadingOldEvents = false;
+          if (loadingOldEventsOld) {
+            loadingOldEventsOld.rejects.forEach((r) => r(e));
+          }
+          reject(e);
+          return;
+        },
+      });
+      this.#followees.then((authors) => {
+        if (this.#onScreenEventLowerbound.value !== Number.MAX_SAFE_INTEGER) {
+          rxReq.emit({
+            kinds: [1],
+            until: until,
+            since: this.#onScreenEventLowerbound.value,
+            authors,
+          });
+        }
+        if (until) {
+          rxReq.emit({
+            kinds: [1],
+            until: until,
+            since: until,
+            authors,
+          });
+          rxReq.emit({
+            kinds: [1],
+            limit: 8,
+            until: until - 1,
+            authors,
+          });
+        } else {
+          rxReq.emit({ kinds: [1], limit: 8, authors });
+        }
+        rxReq.over();
+      });
+    });
+  }
+}
+
+// const relayState = (relay: string) => {
+//   let connection: false | Rx.Subscription = false;
+//   type LoadingOldEventsStatus = {
+//     until: number | undefined;
+//     resolves: ((a: { success: boolean }) => void)[];
+//     rejects: ((e: unknown) => void)[];
+//   };
+//   let loadingOldEvents: false | LoadingOldEventsStatus = false;
+//   return {
+//     concurrentReqs: 0,
+//     backwardReqBatch: [],
+//     startSubscribing: () => {
+//       if (connection) {
+//         return;
+//       }
+//       followees.then((authors) => {
+//         const rxReq = createRxForwardReq();
+//         connection = rxNostr
+//           .use(rxReq, { relays: [relay] })
+//           .subscribe((a) => {
+//             addEvent(a.event, relay, true, true);
+//           });
+//         rxReq.emit({ kinds: [1], limit: 11, authors });
+//       });
+//     },
+//     stopSubscribing: () => {
+//       if (!connection) {
+//         return;
+//       }
+//       console.log("stop sub", relay);
+//       connection?.unsubscribe();
+//       connection = false;
+//     },
+//     ,
+//   };
+// };
+
+// type RelayState = {
+//   startSubscribing: () => void;
+//   stopSubscribing: () => void;
+//   loadOldevents: (until: number | undefined) => Promise<{ success: boolean }>;
+//   concurrentReqs: number;
+//   backwardReqBatch: WaitingBackwardReq[];
+// };
 
 const binarySearch = <T,>(arr: T[], f: (item: T) => boolean): number => {
   let left = -1;
@@ -312,12 +482,20 @@ function NostrEvents({ npub }: NostrEventsProps) {
       }
     }
   };
-  let onScreenEventLowerbound = Number.MAX_SAFE_INTEGER;
+  const onScreenEventLowerbound = { value: Number.MAX_SAFE_INTEGER };
   let setFollowees: (a: string[]) => void;
   const isHex64 = (a: string) => /^[0-9a-f]{64}$/.test(a);
   const followees: Promise<string[]> = new Promise((resolve) => {
     setFollowees = (fs) => resolve(fs.filter(isHex64));
   });
+  const relayState = (relay: string) =>
+    new RelayState(
+      relay,
+      followees,
+      rxNostr,
+      addEvent,
+      onScreenEventLowerbound
+    );
   const addMoreRelays = () =>
     followees.then((authors) => {
       console.log("adding more relays", authors);
@@ -408,109 +586,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
         }
       );
     });
-  const relayState = (relay: string) => {
-    let connection: false | Rx.Subscription = false;
-    type LoadingOldEventsStatus = {
-      until: number | undefined;
-      resolves: ((a: { success: boolean }) => void)[];
-      rejects: ((e: unknown) => void)[];
-    };
-    let loadingOldEvents: false | LoadingOldEventsStatus = false;
-    return {
-      concurrentReqs: 0,
-      backwardReqBatch: [],
-      startSubscribing: () => {
-        if (connection) {
-          return;
-        }
-        followees.then((authors) => {
-          const rxReq = createRxForwardReq();
-          connection = rxNostr
-            .use(rxReq, { relays: [relay] })
-            .subscribe((a) => {
-              addEvent(a.event, relay, true, true);
-            });
-          rxReq.emit({ kinds: [1], limit: 11, authors });
-        });
-      },
-      stopSubscribing: () => {
-        if (!connection) {
-          return;
-        }
-        console.log("stop sub", relay);
-        connection?.unsubscribe();
-        connection = false;
-      },
-      loadOldevents: (until: number | undefined) => {
-        return new Promise<{ success: boolean }>((resolve, reject) => {
-          if (loadingOldEvents) {
-            console.log("skip load old", relay, until);
-            loadingOldEvents.resolves.push(resolve);
-            loadingOldEvents.rejects.push(reject);
-            return;
-          }
-          loadingOldEvents = { until, resolves: [], rejects: [] };
-          const rxReq = createRxBackwardReq();
-          console.log("load old ...", relay, until, loadingOldEvents);
-          let count = 0;
-          rxNostr.use(rxReq, { relays: [relay] }).subscribe({
-            next: (a) => {
-              addEvent(a.event, relay, false, false);
-              count++;
-            },
-            complete: () => {
-              console.log("... load", relay, until, loadingOldEvents);
-              const loadingOldEventsOld = loadingOldEvents;
-              loadingOldEvents = false;
-              const success = count > 0;
-              if (loadingOldEventsOld) {
-                loadingOldEventsOld.resolves.forEach((r) => r({ success }));
-              }
-              resolve({ success });
-              return;
-            },
-            error: (e) => {
-              console.log("... failed to load", relay, until);
-              const loadingOldEventsOld = loadingOldEvents;
-              loadingOldEvents = false;
-              if (loadingOldEventsOld) {
-                loadingOldEventsOld.rejects.forEach((r) => r(e));
-              }
-              reject(e);
-              return;
-            },
-          });
-          followees.then((authors) => {
-            if (onScreenEventLowerbound !== Number.MAX_SAFE_INTEGER) {
-              rxReq.emit({
-                kinds: [1],
-                until: until,
-                since: onScreenEventLowerbound,
-                authors,
-              });
-            }
-            if (until) {
-              rxReq.emit({
-                kinds: [1],
-                until: until,
-                since: until,
-                authors,
-              });
-              rxReq.emit({
-                kinds: [1],
-                limit: 8,
-                until: until - 1,
-                authors,
-              });
-            } else {
-              rxReq.emit({ kinds: [1], limit: 8, authors });
-            }
-            rxReq.over();
-          });
-        });
-      },
-    };
-  };
 
   let ulElement: HTMLElement | null = null;
   let scrolling: undefined | number;
@@ -597,7 +672,7 @@ function NostrEvents({ npub }: NostrEventsProps) {
           if (e.relays.indexOf(relay) === -1) {
             continue;
           }
-          if (e.event.created_at < onScreenEventLowerbound) {
+          if (e.event.created_at < onScreenEventLowerbound.value) {
             bottom++;
           }
           oldest = e.event.created_at;
@@ -629,7 +704,7 @@ function NostrEvents({ npub }: NostrEventsProps) {
           ((e.rootBounds?.bottom || 0) + (e.rootBounds?.top || 0)) / 2 <
           (e.boundingClientRect.bottom + e.boundingClientRect.top) / 2;
         if (isDown) {
-          onScreenEventLowerbound = events[ev].event.created_at;
+          onScreenEventLowerbound.value = events[ev].event.created_at;
         } else {
           // onScreenEventUpperbound = events[ev].event.created_at;
         }
