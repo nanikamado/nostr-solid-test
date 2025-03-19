@@ -900,10 +900,9 @@ const getParent = (
     (e) => {
       resultSetter("value", (prev) => {
         if (prev) {
-          prev.relays.push(e.from);
           return {
             event: e.event,
-            relays: prev.relays,
+            relays: [...prev.relays, e.from],
             transition: false,
             realTime: false,
           };
@@ -993,7 +992,7 @@ function NoteSingle(props: {
   }
 
   return (
-    <div class="py-2 text-sm whitespace-pre-wrap">
+    <div class="py-2 whitespace-pre-wrap">
       <div class="flex w-full gap-1">
         <Show when={prof()} fallback={<div>loading ...</div>}>
           <img
@@ -1003,7 +1002,7 @@ function NoteSingle(props: {
         </Show>
         <div>
           <Show when={prof()} fallback={<div>loading ...</div>}>
-            <div class="flow-root">
+            <div class="flow-root text-sm">
               <span class="font-bold">
                 <TextWithEmoji
                   text={prof()!.name}
@@ -1029,8 +1028,10 @@ function NoteSingle(props: {
             text={event.event.content}
             emojiMap={emojiMap}
           ></TextWithEmoji>
-          <div class="font-mono">{JSON.stringify(event.event)}</div>
-          <div class="opacity-50 mt-0.5">
+          <div class="font-mono text-sm mt-1 opacity-80">
+            {JSON.stringify(event.event)}
+          </div>
+          <div class="opacity-50 mt-0.5 text-sm">
             {[...event.relays]
               .map((a) => a.replace(/^wss:\/\//, ""))
               .join(", ")}
