@@ -468,7 +468,7 @@ const addMoreRelays = (
     const relayCount = new Map<string, number>();
     const preferedRelays: string[][] = [];
     console.log("add more relays");
-    let done = 0;
+    let done = false;
     subscribeReplacable(
       state,
       { kinds: [0, 10_002], authors },
@@ -498,7 +498,7 @@ const addMoreRelays = (
         if (done) {
           throw new Error("should not be called");
         }
-        console.log("complete!!!!", done++);
+        done = true;
         for (const rs of preferedRelays) {
           if (rs.length && !rs.find((r) => state.relays.has(r))) {
             rs.sort(
@@ -509,7 +509,6 @@ const addMoreRelays = (
               if (!relayCount.get(r)) {
                 break;
               }
-              console.log("test relay", r, relayCount.get(r));
               const req = createRxBackwardReq();
               const added = await new Promise((resolve) => {
                 state.rxNostr
@@ -684,18 +683,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
     };
   });
 
-  // const cutEvents = () => {
-  //   const i = events.findIndex((e) => e.possition === "middle");
-  //   if (i <= 2) {
-  //     return events;
-  //   }
-  //   return events.slice(i - 2);
-  // };
-  // let scrollHeightOld = 0;
-
-  // watch events and update noteList
-  // let onScreenEventUpperbound = 0;
-
   const load = () => {
     for (const [relay, relayState] of state.relays) {
       const loadRelay = () => {
@@ -738,8 +725,6 @@ function NostrEvents({ npub }: NostrEventsProps) {
           (e.boundingClientRect.bottom + e.boundingClientRect.top) / 2;
         if (isDown) {
           onScreenEventLowerbound.value = events[ev].event.created_at;
-        } else {
-          // onScreenEventUpperbound = events[ev].event.created_at;
         }
       }
     }
@@ -747,27 +732,12 @@ function NostrEvents({ npub }: NostrEventsProps) {
   });
 
   return (
-    <ul
-      class="mt-4 overflow-scroll"
-      ref={(el) => {
-        ulElement = el;
-        // el.onscroll = () => {
-        //   if (el.scrollHeight !== scrollHeightOld) {
-        //     console.log("scrollHeight", el.scrollHeight);
-        //     el.scrollBy({ top: el.scrollHeight - scrollHeightOld });
-        //     scrollHeightOld = el.scrollHeight;
-        //   }
-        // };
-      }}
-    >
+    <ul class="mt-4 overflow-scroll" ref={(el) => (ulElement = el)}>
       <Show when={events.length === 0}>
         <div>loading ...</div>
       </Show>
       <For each={events}>
         {(event) => {
-          // if (!event.realTime && ulElement && ulElement.scrollTop === 0) {
-          //   ulElement.scroll({ top: 1 });
-          // }
           return Note(event, observer, state);
         }}
       </For>
@@ -971,7 +941,9 @@ const TextWithEmoji = (props: {
       if (section[0] === "text") {
         return <span>{section[1]}</span>;
       } else {
-        return <img class="inline-block h-5" src={imageUrl(section[2])} />;
+        return (
+          <img class="inline-block h-[1.3lh]" src={imageUrl(section[2])} />
+        );
       }
     }}
   </For>
@@ -1103,12 +1075,11 @@ function NoteSingle(props: {
   return (
     <div class="py-2 whitespace-pre-wrap">
       <div class="flex w-full gap-1">
-        <Show when={prof()} fallback={<div>loading ...</div>}>
-          <img
-            src={imageUrl(prof()!.picture)}
-            class="size-10 shrink-0 overflow-hidden rounded"
-          />
-        </Show>
+        <div class="size-10 shrink-0 overflow-hidden rounded">
+          <Show when={prof()}>
+            <img src={imageUrl(prof()!.picture)} />
+          </Show>
+        </div>
         <div>
           <Show when={prof()} fallback={<div>loading ...</div>}>
             <div class="flow-root text-sm">
@@ -1133,10 +1104,12 @@ function NoteSingle(props: {
           <Show when={threadParent && threadParent.value}>
             <NoteSingle event={threadParent!.value!} state={state}></NoteSingle>
           </Show>
-          <TextWithEmoji
-            text={event.event.content}
-            emojiMap={emojiMap}
-          ></TextWithEmoji>
+          <div>
+            <TextWithEmoji
+              text={event.event.content}
+              emojiMap={emojiMap}
+            ></TextWithEmoji>
+          </div>
           <div class="font-mono text-sm mt-1 opacity-80">
             {JSON.stringify(event.event)}
           </div>
