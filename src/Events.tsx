@@ -169,51 +169,6 @@ class RelayState {
   }
 }
 
-// const relayState = (relay: string) => {
-//   let connection: false | Rx.Subscription = false;
-//   type LoadingOldEventsStatus = {
-//     until: number | undefined;
-//     resolves: ((a: { success: boolean }) => void)[];
-//     rejects: ((e: unknown) => void)[];
-//   };
-//   let loadingOldEvents: false | LoadingOldEventsStatus = false;
-//   return {
-//     concurrentReqs: 0,
-//     backwardReqBatch: [],
-//     startSubscribing: () => {
-//       if (connection) {
-//         return;
-//       }
-//       followees.then((authors) => {
-//         const rxReq = createRxForwardReq();
-//         connection = rxNostr
-//           .use(rxReq, { relays: [relay] })
-//           .subscribe((a) => {
-//             addEvent(a.event, relay, true, true);
-//           });
-//         rxReq.emit({ kinds: [1], limit: 11, authors });
-//       });
-//     },
-//     stopSubscribing: () => {
-//       if (!connection) {
-//         return;
-//       }
-//       console.log("stop sub", relay);
-//       connection?.unsubscribe();
-//       connection = false;
-//     },
-//     ,
-//   };
-// };
-
-// type RelayState = {
-//   startSubscribing: () => void;
-//   stopSubscribing: () => void;
-//   loadOldevents: (until: number | undefined) => Promise<{ success: boolean }>;
-//   concurrentReqs: number;
-//   backwardReqBatch: WaitingBackwardReq[];
-// };
-
 const binarySearch = <T,>(arr: T[], f: (item: T) => boolean): number => {
   let left = -1;
   let right = arr.length;
@@ -546,8 +501,39 @@ const addMoreRelays = (
     );
   });
 
+const getFollowees = (
+  npub: string,
+  state: AppState,
+  rxNostr: RxNostr,
+  mkRelayState: (relay: string) => RelayState,
+  setFollowees: (fs: string[]) => void
+) =>
+  subscribeReplacable(state, { kinds: [3, 10_002], authors: [npub] }, (a) => {
+    if (a.event.kind === 3) {
+      const followees = a.event.tags.flatMap((t) =>
+        t.length >= 2 && t[0] === "p" ? [t[1]] : []
+      );
+      if (followees.length !== 0) {
+        setFollowees(followees);
+      }
+    } else if (a.event.kind === 10002) {
+      const rs = a.event.tags.flatMap((t) =>
+        t.length >= 2 && t[0] === "r" && t[2] !== "write"
+          ? [normalizeUrl(t[1])]
+          : []
+      );
+      rs.forEach((relay) => {
+        if (!state.relays.has(relay)) {
+          state.relays.set(relay, mkRelayState(relay));
+          rxNostr.addDefaultRelays([relay]);
+        }
+      });
+    }
+  });
+
 type NostrEventsProps = {
   npub: () => string;
+  tlType: TlType;
 };
 
 type BridgedAccountProfile = {
@@ -566,7 +552,9 @@ type UserProfile = {
   bridged?: BridgedAccountProfile;
 };
 
-function NostrEvents({ npub }: NostrEventsProps) {
+export type TlType = "home" | "user";
+
+export function NostrEvents({ npub, tlType }: NostrEventsProps) {
   const [events, setEvents] = createStore<EventSignal[]>([]);
 
   const rxNostr = createRxNostr({
@@ -613,43 +601,22 @@ function NostrEvents({ npub }: NostrEventsProps) {
           addEvent(events, setEvents, e, r, transition, realTime),
         onScreenEventLowerbound
       );
-
     for (const relay in rxNostr.getDefaultRelays()) {
       const r = normalizeUrl(relay);
       state.relays.set(r, relayState(r));
     }
-    subscribeReplacable(
-      state,
-      { kinds: [3, 10_002], authors: [npub()] },
-      (a) => {
-        if (a.event.kind === 3) {
-          const followees = a.event.tags.flatMap((t) =>
-            t.length >= 2 && t[0] === "p" ? [t[1]] : []
-          );
-          if (followees.length !== 0) {
-            setFollowees(followees);
-          }
-        } else if (a.event.kind === 10002) {
-          const rs = a.event.tags.flatMap((t) =>
-            t.length >= 2 && t[0] === "r" && t[2] !== "write"
-              ? [normalizeUrl(t[1])]
-              : []
-          );
-          rs.forEach((relay) => {
-            if (!state.relays.has(relay)) {
-              state.relays.set(relay, relayState(relay));
-              rxNostr.addDefaultRelays([relay]);
-            }
-          });
-        }
-      }
-    );
-
     for (const [_relay, relayState] of state.relays) {
       relayState.startSubscribing();
     }
-
-    addMoreRelays(followees, state, relayState);
+    if (tlType === "home") {
+      getFollowees(npub(), state, rxNostr, relayState, setFollowees!);
+      addMoreRelays(followees, state, relayState);
+    } else if (tlType === "user") {
+      setFollowees!([npub()]);
+      addMoreRelays(followees, state, relayState);
+    } else {
+      throw new Error("unknown tlType");
+    }
   });
 
   let ulElement: HTMLElement | null = null;
@@ -1123,5 +1090,3 @@ function NoteSingle(props: {
     </div>
   );
 }
-
-export default NostrEvents;

@@ -1,10 +1,10 @@
 import * as RxNostr from "rx-nostr";
 import "./App.css";
-import NostrEvents from "./Events.tsx";
+import { NostrEvents, TlType } from "./Events.tsx";
 import { Route, useParams, HashRouter } from "@solidjs/router";
 import { createMemo, Show } from "solid-js";
 
-function Home() {
+const Home = (tlType: TlType) => () => {
   const params = useParams();
   const npub = createMemo(() => {
     try {
@@ -17,11 +17,11 @@ function Home() {
     <div class="h-dvh mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
       <Show when={npub()} fallback={<h2>Invalid npub: {params.npub}</h2>}>
         <h2 class="mt-3">Nost Events</h2>
-        <NostrEvents npub={() => npub()!} />
+        <NostrEvents npub={() => npub()!} tlType={tlType} />
       </Show>
     </div>
   );
-}
+};
 
 function Usage() {
   return (
@@ -35,7 +35,14 @@ function Usage() {
 function App() {
   return (
     <HashRouter>
-      <Route path="/home/:npub" component={Home} />
+      <Route path="/home/:npub" component={Home("home")} />
+      <Route
+        path="/:npub"
+        component={Home("user")}
+        matchFilters={{
+          npub: /^npub1/,
+        }}
+      />
       <Route path="*" component={Usage} />
     </HashRouter>
   );
