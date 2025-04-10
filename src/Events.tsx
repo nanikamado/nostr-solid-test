@@ -21,6 +21,7 @@ import useDatePulser from "./utils/useDatePulser.ts";
 import { formatRelative } from "./utils/formatDate.ts";
 // @ts-types="solid-js"
 import { createEffect } from "solid-js";
+import { parseText } from "./parseText.ts";
 
 type EventSignal = {
   event: NostrEvent;
@@ -725,33 +726,6 @@ type AppState = {
   relays: UrlMap<RelayState>;
 };
 
-type ParseTextResult = (["text", string] | ["emoji", string, string])[];
-
-const parseText = (
-  text: string,
-  emojiMap: Map<string, string>
-): ParseTextResult => {
-  const sections = text.split(":");
-  const result: ParseTextResult = [];
-  let canBeEmoji = false;
-  for (const section of sections) {
-    if (canBeEmoji) {
-      const url = emojiMap.get(section);
-      if (url) {
-        result.push(["emoji", section, url]);
-        canBeEmoji = false;
-      } else {
-        result.push(["text", ":" + section]);
-        canBeEmoji = true;
-      }
-    } else {
-      result.push(["text", section]);
-      canBeEmoji = true;
-    }
-  }
-  return result;
-};
-
 const httpsProxy = (url: string) => {
   return url;
   // if (url.startsWith("https://") || url.startsWith("http://")) {
@@ -899,22 +873,30 @@ const UserId = (props: {
   );
 };
 
-const TextWithEmoji = (props: {
+const NostrText = (props: {
   text: string;
   emojiMap: Map<string, string>;
-}) => (
-  <For each={parseText(props.text, props.emojiMap)}>
-    {(section) => {
-      if (section[0] === "text") {
-        return <span>{section[1]}</span>;
-      } else {
-        return (
-          <img class="inline-block h-[1.3lh]" src={imageUrl(section[2])} />
-        );
-      }
-    }}
-  </For>
-);
+  images?: Set<string>;
+}) => {
+  if (!props.images) {
+    props.images = new Set<string>();
+  }
+  return (
+    <For each={parseText(props.text, props.emojiMap, props.images)}>
+      {(section) => {
+        if (section[0] === "emoji") {
+          return (
+            <img class="inline-block h-[1.3lh]" src={imageUrl(section[2])} />
+          );
+        } else if (section[0] === "image") {
+          return <img src={imageUrl(section[1])} />;
+        } else {
+          return <span>{section[1]}</span>;
+        }
+      }}
+    </For>
+  );
+};
 
 const DateText = (props: { date: number }) => {
   const currentDateHigh = createRoot(() =>
@@ -1009,9 +991,17 @@ function NoteSingle(props: {
 }) {
   const { event, state, threadParent } = props;
   const emojiMap = new Map<string, string>();
+  const images = new Set<string>();
   event.event.tags.forEach((t) => {
     if (t.length >= 3 && t[0] === "emoji") {
       emojiMap.set(t[1], t[2]);
+    } else if (t[0] === "imeta") {
+      if (t.slice(1).find((t) => t.startsWith("m image/"))) {
+        const image = t.slice(1).find((t) => t.startsWith("url "));
+        if (image) {
+          images.add(image.slice("url ".length));
+        }
+      }
     }
   });
   onMount(() => {
@@ -1051,10 +1041,10 @@ function NoteSingle(props: {
           <Show when={prof()} fallback={<div>loading ...</div>}>
             <div class="flow-root text-sm">
               <span class="font-bold">
-                <TextWithEmoji
+                <NostrText
                   text={prof()!.name}
                   emojiMap={prof()!.emojiMap}
-                ></TextWithEmoji>
+                ></NostrText>
               </span>
               <span class="ml-3">
                 <UserId
@@ -1072,10 +1062,11 @@ function NoteSingle(props: {
             <NoteSingle event={threadParent!.value!} state={state}></NoteSingle>
           </Show>
           <div>
-            <TextWithEmoji
+            <NostrText
               text={event.event.content}
               emojiMap={emojiMap}
-            ></TextWithEmoji>
+              images={images}
+            ></NostrText>
           </div>
           <div class="font-mono text-sm mt-1 opacity-80">
             {JSON.stringify(event.event)}
