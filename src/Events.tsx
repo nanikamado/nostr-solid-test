@@ -110,7 +110,7 @@ class RelayState {
       }
       this.#loadingOldEvents = { until, resolves: [], rejects: [] };
       const rxReq = createRxBackwardReq();
-      console.log("load old ...", this.relay, until, this.#loadingOldEvents);
+      console.log("load old", this.relay, until, this.#loadingOldEvents, "...");
       let count = 0;
       this.#rxNostr.use(rxReq, { relays: [this.relay] }).subscribe({
         next: (a) => {
@@ -616,16 +616,14 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
     }
     if (tlType.type === "home") {
       getFollowees(tlType.npub(), state, rxNostr, relayState, setBaseFilter!);
-      addMoreRelays(baseFilter, state, relayState);
     } else if (tlType.type === "user") {
       setBaseFilter!({ authors: [tlType.npub()] });
-      addMoreRelays(baseFilter, state, relayState);
     } else if (tlType.type === "tag") {
       setBaseFilter!({ "#t": [tlType.tag()] });
-      addMoreRelays(baseFilter, state, relayState);
     } else {
       throw new Error("unknown tlType");
     }
+    addMoreRelays(baseFilter, state, relayState);
   });
 
   let ulElement: HTMLElement | null = null;
@@ -661,9 +659,10 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
 
   const load = () => {
     for (const [relay, relayState] of state.relays) {
+      let lastOldest: undefined | null | number;
+      let oldest: null | number = null;
       const loadRelay = () => {
         let bottom = 0;
-        let oldest = undefined;
         for (const e of events) {
           if (e.relays.indexOf(relay) === -1) {
             continue;
@@ -676,8 +675,9 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
         if (bottom > 10) {
           console.log("remove event of", relay);
           removeEventsFromBottom(events, setEvents, bottom - 10, relay);
-        } else if (bottom <= 3) {
-          relayState.loadOldevents(oldest).then(({ success }) => {
+        } else if (bottom <= 3 && lastOldest !== oldest) {
+          lastOldest = oldest;
+          relayState.loadOldevents(oldest || undefined).then(({ success }) => {
             if (success) {
               loadRelay();
             }
