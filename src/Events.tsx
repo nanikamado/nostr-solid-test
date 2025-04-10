@@ -22,6 +22,7 @@ import { formatRelative } from "./utils/formatDate.ts";
 // @ts-types="solid-js"
 import { createEffect } from "solid-js";
 import { parseText } from "./parseText.ts";
+import EventMenuButton from "./EventMenuButton.tsx";
 
 type EventSignal = {
   event: NostrEvent;
@@ -1037,6 +1038,8 @@ function NoteSingle(props: {
     prof = () => p.get[1];
   }
 
+  const [jsonOn, setJsonOn] = createSignal(false);
+
   return (
     <div class="py-2 whitespace-pre-wrap">
       <div class="flex w-full gap-1">
@@ -1045,7 +1048,7 @@ function NoteSingle(props: {
             <img src={imageUrl(prof()!.picture)} />
           </Show>
         </div>
-        <div>
+        <div class="w-full">
           <Show when={prof()} fallback={<div>loading ...</div>}>
             <div class="flow-root text-sm">
               <span class="font-bold">
@@ -1076,9 +1079,12 @@ function NoteSingle(props: {
               images={images}
             ></NostrText>
           </div>
-          <div class="font-mono text-sm mt-1 opacity-80">
-            {JSON.stringify(event.event)}
-          </div>
+          <EventMenuButton jsonOn={jsonOn} setJsonOn={setJsonOn} />
+          <Show when={jsonOn()}>
+            <div class="font-mono text-sm mt-1 opacity-80">
+              {JSON.stringify(event.event)}
+            </div>
+          </Show>
           <div class="opacity-50 mt-0.5 text-sm">
             {[...event.relays]
               .map((a) => a.replace(/^wss:\/\//, ""))
