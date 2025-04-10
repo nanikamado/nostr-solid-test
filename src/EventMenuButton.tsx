@@ -14,7 +14,7 @@ const EventMenuButton: Component<{
         </div>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content class="bg-gray-700 m-1 px-2 rounded-md shadow-lg">
+        <DropdownMenu.Content class="bg-main-background m-1 px-2 border shadow-lg">
           <DropdownMenu.CheckboxItem
             checked={props.jsonOn()}
             onChange={props.setJsonOn}
