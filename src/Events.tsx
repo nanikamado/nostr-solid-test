@@ -895,7 +895,7 @@ const NostrText = (props: {
       {(section) => {
         if (section[0] === "emoji") {
           return (
-            <img class="inline-block h-[1.3lh]" src={imageUrl(section[2])} />
+            <img class="inline-block h-[1.7em]" src={imageUrl(section[2])} />
           );
         } else if (section[0] === "image") {
           return <img src={imageUrl(section[1])} />;
