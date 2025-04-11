@@ -1,7 +1,5 @@
 import "./Events.css";
 import { onCleanup, onMount, For, Show, createRoot } from "solid-js";
-import { NostrEvent } from "./nostr.ts";
-// import { Channel } from "./channel.ts";
 import {
   createRxNostr,
   createRxForwardReq,
@@ -22,10 +20,19 @@ import { formatRelative } from "./utils/formatDate.ts";
 // @ts-types="solid-js"
 import { createEffect } from "solid-js";
 import { parseText } from "./parseText.ts";
-import EventMenuButton from "./EventMenuButton.tsx";
+import EllipsisHorizontal from "heroicons/24/outline/ellipsis-horizontal.svg";
+import ToggleButton from "./ToggleButton.tsx";
+import binarySearch from "./utils/binarySearch.ts";
+import {
+  getBridgeInfo,
+  makeProfileFromEvent,
+  mergeFilters,
+  ParsedNip05,
+  UserProfile,
+} from "./nostr.ts";
 
 type EventSignal = {
-  event: NostrEvent;
+  event: NostrType.Event;
   transition: boolean;
   realTime?: boolean;
   relays: string[];
@@ -52,7 +59,7 @@ class RelayState {
   #baseFilter: Promise<NostrType.Filter>;
   #rxNostr: RxNostr;
   #addEvent: (
-    event: NostrEvent,
+    event: NostrType.Event,
     relay: string,
     transition: boolean,
     realTime: boolean
@@ -64,7 +71,7 @@ class RelayState {
     baseFilter: Promise<NostrType.Filter>,
     rxNostr: RxNostr,
     addEvent: (
-      event: NostrEvent,
+      event: NostrType.Event,
       relay: string,
       transition: boolean,
       realTime: boolean
@@ -170,69 +177,6 @@ class RelayState {
     });
   }
 }
-
-const binarySearch = <T,>(arr: T[], f: (item: T) => boolean): number => {
-  let left = -1;
-  let right = arr.length;
-
-  while (right - left > 1) {
-    const mid = Math.floor((left + right) / 2);
-    if (f(arr[mid])) {
-      right = mid;
-    } else {
-      left = mid;
-    }
-  }
-
-  return right;
-};
-
-const eqSet = <T,>(xs: Set<T>, ys: Set<T>) =>
-  xs.size === ys.size && [...xs].every((x) => ys.has(x));
-
-const mergeFilters = (
-  a: NostrType.Filter,
-  b: NostrType.Filter
-): NostrType.Filter | null => {
-  let differentKey;
-  if (
-    Object.entries(a).length !== Object.entries(b).length ||
-    a.since !== b.since ||
-    a.until !== b.until ||
-    a.search ||
-    b.search ||
-    a.limit ||
-    b.limit
-  ) {
-    return null;
-  }
-  for (const key in a) {
-    if (key === "since" || key === "until") {
-      continue;
-    }
-    const getAsSet = (f: NostrType.Filter, key: string) =>
-      new Set((f as Record<string, unknown>)[key] as unknown[]);
-    if (!eqSet(getAsSet(a, key), getAsSet(b, key))) {
-      if (differentKey) {
-        return null;
-      }
-      differentKey = key;
-    }
-  }
-  if (differentKey) {
-    return {
-      ...a,
-      [differentKey]: [
-        ...new Set([
-          ...((a as Record<string, unknown>)[differentKey] as unknown[]),
-          ...((b as Record<string, unknown>)[differentKey] as unknown[]),
-        ]),
-      ],
-    };
-  } else {
-    return null;
-  }
-};
 
 const MAX_CUNCURRENT_REQS = 10;
 
@@ -347,7 +291,7 @@ const isHex64 = (a: string) => /^[0-9a-f]{64}$/.test(a);
 const addEvent = (
   events: EventSignal[],
   setEvents: SetStoreFunction<EventSignal[]>,
-  event: NostrEvent,
+  event: NostrType.Event,
   relay: string,
   transition: boolean,
   realTime: boolean
@@ -538,22 +482,6 @@ const getFollowees = (
 
 type NostrEventsProps = {
   tlType: TlType;
-};
-
-type BridgedAccountProfile = {
-  id?: string;
-  bridgeSerever?: string;
-  bridgedFrom: string;
-};
-
-type UserProfile = {
-  pubkey: string;
-  name: string;
-  picture?: string;
-  created_at: number;
-  emojiMap: Map<string, string>;
-  nip05?: ParsedNip05;
-  bridged?: BridgedAccountProfile;
 };
 
 export type TlType =
@@ -747,22 +675,6 @@ const httpsProxy = (url: string) => {
 const imageUrl = (original: string | undefined) =>
   original ? httpsProxy(original) : "";
 
-type ParsedNip05 = {
-  name: string;
-  domain: string;
-  text: string;
-};
-
-const parseNip05 = (nip05: string): ParsedNip05 | null => {
-  const s = nip05.split("@");
-  if (s.length < 2) {
-    return null;
-  }
-  const name = s.slice(0, s.length - 1).join("@");
-  const domain = s[s.length - 1];
-  return { name: name, domain, text: name === "_" ? "@" + domain : nip05 };
-};
-
 const verifyNip05Inner = async (
   name: string,
   domain: string,
@@ -795,69 +707,6 @@ const verifyNip05 = (
       });
   }
   return state.Nip05Verified.get(pubkey)!;
-};
-
-const makeProfileFromEvent = (event: NostrType.Event): UserProfile => {
-  const emojiMap = new Map<string, string>();
-  event.tags.forEach((t) => {
-    if (t.length >= 3 && t[0] === "emoji") {
-      emojiMap.set(t[1], t[2]);
-    }
-  });
-  const p: UserProfile = {
-    pubkey: event.pubkey,
-    name: "",
-    created_at: event.created_at,
-    emojiMap,
-  };
-  try {
-    const profileObj = JSON.parse(event.content);
-    p.name = profileObj.display_name || profileObj.name || "";
-    p.picture = profileObj.picture;
-    p.nip05 = profileObj.nip05 && parseNip05(profileObj.nip05);
-  } catch (_e) {
-    p.name = event.pubkey;
-  }
-  return p;
-};
-
-const getBridgeInfo = (
-  event: NostrType.Event,
-  nip05?: ParsedNip05
-): BridgedAccountProfile | undefined => {
-  let bridgeSerever;
-  let id;
-  if (nip05 && nip05.domain === "momostr.pink") {
-    bridgeSerever = nip05.domain;
-    const sections = nip05.name.split("_at_");
-    id =
-      "@" +
-      sections.slice(0, sections.length - 1).join("_at_") +
-      "@" +
-      sections[sections.length - 1];
-  } else if (nip05 && nip05.domain.endsWith(".mostr.pub")) {
-    bridgeSerever = "mostr.pub";
-    id =
-      "@" +
-      nip05.name +
-      "@" +
-      nip05.domain.replace(/\.mostr\.pub$/, "").replace("-", ".");
-  }
-  const activitypub = event.tags.find(
-    (t) => t[0] === "proxy" && t[2] === "activitypub"
-  );
-  const atproto = event.tags.find(
-    (t) => t[0] === "proxy" && t[2] === "atproto"
-  );
-  const web = event.tags.find((t) => t[0] === "proxy" && t[2] === "web");
-  const bridgedFrom =
-    (atproto?.[2] && "Bluesky") ||
-    (activitypub?.[2] && "Fediverse") ||
-    (web?.[2] && "Web");
-  if (!bridgedFrom) {
-    return undefined;
-  }
-  return { id, bridgeSerever, bridgedFrom };
 };
 
 const UserId = (props: {
@@ -1038,6 +887,7 @@ function NoteSingle(props: {
     prof = () => p.get[1];
   }
 
+  const [eventMenuOn, setEventMenuOn] = createSignal(false);
   const [jsonOn, setJsonOn] = createSignal(false);
 
   return (
@@ -1079,7 +929,20 @@ function NoteSingle(props: {
               images={images}
             ></NostrText>
           </div>
-          <EventMenuButton jsonOn={jsonOn} setJsonOn={setJsonOn} />
+          <div>
+            <ToggleButton isOn={eventMenuOn} setIsOn={setEventMenuOn}>
+              <div class="size-4 shrink-0">
+                <EllipsisHorizontal />
+              </div>
+            </ToggleButton>
+          </div>
+          <div>
+            <Show when={eventMenuOn()}>
+              <ToggleButton isOn={jsonOn} setIsOn={setJsonOn}>
+                Show JSON
+              </ToggleButton>
+            </Show>
+          </div>
           <Show when={jsonOn()}>
             <div class="font-mono text-sm mt-1 opacity-80">
               {JSON.stringify(event.event)}
