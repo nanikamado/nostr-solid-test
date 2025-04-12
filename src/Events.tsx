@@ -484,10 +484,11 @@ type NostrEventsProps = {
   tlType: TlType;
 };
 
-export type TlType =
+export type TlType = (
   | { type: "home"; npub: () => string }
   | { type: "user"; npub: () => string }
-  | { type: "tag"; tag: () => string };
+  | { type: "customFilter"; baseFilter: () => NostrType.Filter }
+) & { baseRelays: () => string[] };
 
 export function NostrEvents({ tlType }: NostrEventsProps) {
   const [events, setEvents] = createStore<EventSignal[]>([]);
@@ -515,12 +516,7 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
 
   createEffect(() => {
     setEvents([]);
-    rxNostr.setDefaultRelays([
-      "wss://relay.damus.io",
-      "wss://relay.momostr.pink",
-      "wss://nos.lol",
-      "wss://yabu.me",
-    ]);
+    rxNostr.setDefaultRelays(tlType.baseRelays());
     state.relays = new UrlMap<RelayState>();
     onScreenEventLowerbound.value = Number.MAX_SAFE_INTEGER;
     let setBaseFilter: (a: NostrType.Filter) => void;
@@ -547,8 +543,8 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
       getFollowees(tlType.npub(), state, rxNostr, relayState, setBaseFilter!);
     } else if (tlType.type === "user") {
       setBaseFilter!({ authors: [tlType.npub()] });
-    } else if (tlType.type === "tag") {
-      setBaseFilter!({ "#t": [tlType.tag()] });
+    } else if (tlType.type === "customFilter") {
+      setBaseFilter!(tlType.baseFilter());
     } else {
       throw new Error("unknown tlType");
     }

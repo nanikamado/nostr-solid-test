@@ -1,8 +1,15 @@
 import * as RxNostr from "rx-nostr";
 import "./App.css";
 import { NostrEvents } from "./Events.tsx";
-import { Route, useParams, HashRouter } from "@solidjs/router";
+import { Route, useParams, HashRouter, useLocation } from "@solidjs/router";
 import { createMemo, Show } from "solid-js";
+
+const baseRelays = [
+  "wss://relay.damus.io",
+  "wss://relay.momostr.pink",
+  "wss://nos.lol",
+  "wss://yabu.me",
+];
 
 const Home = (type: "home" | "user") => () => {
   const params = useParams();
@@ -17,7 +24,9 @@ const Home = (type: "home" | "user") => () => {
     <div class="h-dvh mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
       <Show when={npub()} fallback={<h2>Invalid npub: {params.npub}</h2>}>
         <h2 class="mt-3">Nost Events</h2>
-        <NostrEvents tlType={{ type, npub: () => npub()! }} />
+        <NostrEvents
+          tlType={{ type, npub: () => npub()!, baseRelays: () => baseRelays }}
+        />
       </Show>
     </div>
   );
@@ -28,7 +37,29 @@ const Tag = () => {
   return (
     <div class="h-dvh mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
       <h2 class="mt-3">Nost Events</h2>
-      <NostrEvents tlType={{ type: "tag", tag: () => params.tag }} />
+      <NostrEvents
+        tlType={{
+          type: "customFilter",
+          baseFilter: () => ({ "#t": [params.tag] }),
+          baseRelays: () => baseRelays,
+        }}
+      />
+    </div>
+  );
+};
+
+const RelayTl = () => {
+  const location = useLocation();
+  return (
+    <div class="h-dvh mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
+      <h2 class="mt-3">Nost Events</h2>
+      <NostrEvents
+        tlType={{
+          type: "customFilter",
+          baseFilter: () => ({}),
+          baseRelays: () => [location.pathname.slice(1)],
+        }}
+      />
     </div>
   );
 };
@@ -54,6 +85,13 @@ function App() {
         }}
       />
       <Route path="/tag/:tag" component={Tag} />
+      <Route
+        path="/:ws/*"
+        component={RelayTl}
+        matchFilters={{
+          ws: ["ws:", "wss:"],
+        }}
+      />
       <Route path="*" component={Usage} />
     </HashRouter>
   );
