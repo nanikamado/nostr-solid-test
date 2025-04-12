@@ -777,35 +777,38 @@ const getParent = (
   }
   const parent = reply || root;
   if (!parent) {
-    return Promise.resolve(undefined);
+    return;
   }
+  resultSetter("value", ["loading"]);
   getEvents(
     state,
     { ids: [parent] },
     (e) => {
       resultSetter("value", (prev) => {
-        if (prev) {
-          return {
+        let r;
+        if (prev && prev[0] === "event") {
+          r = {
             event: e.event,
-            relays: [...prev.relays, e.from],
+            relays: [...prev[1].relays, e.from],
             transition: false,
             realTime: false,
           };
         } else {
-          return {
+          r = {
             event: e.event,
             relays: [e.from],
             transition: false,
             realTime: false,
           };
         }
+        return ["event", r];
       });
     },
     () => {}
   );
 };
 
-type ThreadParentStore = { value: null | EventSignal };
+type ThreadParentStore = { value: null | ["loading"] | ["event", EventSignal] };
 
 function Note(
   event: EventSignal,
@@ -917,7 +920,15 @@ function NoteSingle(props: {
             </div>
           </Show>
           <Show when={threadParent && threadParent.value}>
-            <NoteSingle event={threadParent!.value!} state={state}></NoteSingle>
+            <Show
+              when={threadParent!.value![0] === "event"}
+              fallback={<NoteLoading />}
+            >
+              <NoteSingle
+                event={threadParent!.value![1] as EventSignal}
+                state={state}
+              ></NoteSingle>
+            </Show>
           </Show>
           <div>
             <NostrText
@@ -961,3 +972,13 @@ function NoteSingle(props: {
     </div>
   );
 }
+
+const NoteLoading = () => {
+  return (
+    <div class="w-full p-2">
+      <div class="w-full rounded-sm border-dashed border-white border-1 h-7 p-2">
+        loading ...
+      </div>
+    </div>
+  );
+};
