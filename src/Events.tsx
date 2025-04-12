@@ -85,10 +85,10 @@ class RelayState {
   }
 
   startSubscribing() {
-    if (this.#connection) {
-      return;
-    }
     this.#baseFilter.then((baseFilter) => {
+      if (this.#connection) {
+        return;
+      }
       const rxReq = createRxForwardReq();
       this.#connection = this.#rxNostr
         .use(rxReq, { relays: [this.relay] })
@@ -559,7 +559,7 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
       return;
     }
     const ulElm = ulElement;
-    let isSubscribing = false;
+    let isSubscribing = true;
 
     ulElement.onscroll = () => {
       const isSubscribingOld = isSubscribing;
