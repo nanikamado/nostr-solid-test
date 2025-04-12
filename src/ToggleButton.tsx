@@ -1,24 +1,19 @@
 import { JSX } from "solid-js";
 
-type Props = {
+export function ToggleButton(props: {
   isOn: () => boolean;
   setIsOn: (v: boolean) => void;
   children: JSX.Element;
-};
-
-export function ToggleButton({
-  isOn: isOn,
-  setIsOn: setIsOn,
-  children,
-}: Props) {
+  offTextColor?: string;
+}) {
   return (
-    <button type="button" onClick={() => setIsOn(!isOn())}>
+    <button type="button" onClick={() => props.setIsOn(!props.isOn())}>
       <div
         class={`${
-          isOn() ? "text-pink-500" : "text-gray-100"
+          props.isOn() ? "text-pink-500" : props.offTextColor || "text-gray-100"
         } hover:text-pink-300`}
       >
-        {children}
+        {props.children}
       </div>
     </button>
   );

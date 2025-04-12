@@ -20,7 +20,8 @@ import { formatRelative } from "./utils/formatDate.ts";
 // @ts-types="solid-js"
 import { createEffect } from "solid-js";
 import { parseText } from "./parseText.ts";
-import EllipsisHorizontal from "heroicons/24/outline/ellipsis-horizontal.svg";
+import ChevronUp from "heroicons/24/outline/chevron-up.svg";
+import ChevronDown from "heroicons/24/outline/chevron-down.svg";
 import ToggleButton from "./ToggleButton.tsx";
 import binarySearch from "./utils/binarySearch.ts";
 import {
@@ -925,10 +926,16 @@ function NoteSingle(props: {
               images={images}
             ></NostrText>
           </div>
-          <div>
-            <ToggleButton isOn={eventMenuOn} setIsOn={setEventMenuOn}>
+          <div class="flex justify-around mt-1">
+            <ToggleButton
+              isOn={eventMenuOn}
+              setIsOn={setEventMenuOn}
+              offTextColor="text-gray-100/50"
+            >
               <div class="size-4 shrink-0">
-                <EllipsisHorizontal />
+                <Show when={eventMenuOn()} fallback={<ChevronDown />}>
+                  <ChevronUp />
+                </Show>
               </div>
             </ToggleButton>
           </div>
