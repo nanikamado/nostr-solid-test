@@ -976,7 +976,7 @@ function NoteSingle(props: {
 const NoteLoading = () => {
   return (
     <div class="w-full p-2">
-      <div class="w-full rounded-sm border-dashed border-white border-1 h-7 p-2">
+      <div class="w-full rounded-sm border-dashed border-white border-1 p-2">
         loading ...
       </div>
     </div>
