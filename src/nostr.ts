@@ -148,10 +148,14 @@ const mergeFilters = (
   }
 };
 
+export type EventStreamElement =
+  | ["event", EventPacket]
+  | ["eose", string]
+  | ["complete"];
+
 type WaitingBackwardReq = {
   filter: NostrType.Filter;
-  callback: (e: EventPacket) => void;
-  complete: () => void;
+  callback: (e: EventStreamElement) => void;
 };
 
 const MAX_CUNCURRENT_REQS = 10;
@@ -165,11 +169,10 @@ export class BatchPool {
   getEvents(
     rxNostr: RxNostr,
     filter: NostrType.Filter,
-    callback: (e: EventPacket) => void,
-    complete: () => void
+    callback: (e: EventStreamElement) => void
   ) {
-    const cb = (a: EventPacket) => {
-      if (!isFiltered(a.event, filter)) {
+    const cb = (a: EventStreamElement) => {
+      if (a[0] === "event" && !isFiltered(a[1].event, filter)) {
         return;
       }
       callback(a);
@@ -190,7 +193,7 @@ export class BatchPool {
         }
       }
       if (!merged) {
-        this.backwardReqBatch.push({ filter, callback: cb, complete });
+        this.backwardReqBatch.push({ filter, callback: cb });
       }
       return;
     }
@@ -202,29 +205,28 @@ export class BatchPool {
         const batch = this.backwardReqBatch.shift();
         if (batch) {
           this.concurrentReqs++;
-          subscribe(batch.filter, batch.callback, batch.complete);
+          subscribe(batch.filter, batch.callback);
         }
       }
     };
     const subscribe = (
       filter: NostrType.Filter,
-      cb: (e: EventPacket) => void,
-      complete: () => void
+      cb: (e: EventStreamElement) => void
     ) => {
       const rxReq = createRxBackwardReq();
       rxNostr.use(rxReq, { relays: [this.relay] }).subscribe({
-        next: cb,
+        next: (e) => cb(["event", e]),
         complete: () => {
-          comp(complete);
+          comp(() => cb(["eose", this.relay]));
         },
         error: (e) => {
-          comp(complete);
+          comp(() => cb(["eose", this.relay]));
           console.error(e);
         },
       });
       rxReq.emit(filter);
       rxReq.over();
     };
-    subscribe(filter, cb, complete);
+    subscribe(filter, cb);
   }
 }

@@ -25,6 +25,7 @@ import ToggleButton from "./ToggleButton.tsx";
 import binarySearch from "./utils/binarySearch.ts";
 import {
   BatchPool,
+  EventStreamElement,
   getBridgeInfo,
   makeProfileFromEvent,
   ParsedNip05,
@@ -33,9 +34,14 @@ import {
 import { Channel } from "./channel.ts";
 import { ReactiveMap } from "@solid-primitives/map";
 
+type EventReferer = {
+  reactions: ReactiveMap<string, number>;
+  recievedEvents: Set<string>;
+};
+
 type EventSignal = {
   event: NostrType.Event;
-  reactions: ReactiveMap<string, number>;
+  referer: EventReferer;
   transition: boolean;
   realTime?: boolean;
   relays: string[];
@@ -186,22 +192,18 @@ class RelayState {
 const getEvents = (
   state: AppState,
   filter: NostrType.Filter,
-  callback: (e: EventPacket) => void,
-  complete: () => void = () => {}
+  callback: (e: EventStreamElement) => void
 ) => {
   let count = state.relays.size();
-  const countComplete = () => {
-    if (--count === 0) {
-      complete();
-    }
-  };
   for (const [_relay, relayState] of state.relays) {
-    relayState.batchPool.getEvents(
-      state.rxNostr,
-      filter,
-      callback,
-      countComplete
-    );
+    relayState.batchPool.getEvents(state.rxNostr, filter, (e) => {
+      callback(e);
+      if (e[0] === "eose") {
+        if (--count === 0) {
+          callback(["complete"]);
+        }
+      }
+    });
   }
 };
 
@@ -212,10 +214,9 @@ const subscribeReplacable = (
   complete: () => void = () => {}
 ) => {
   const latestCursors = new Map<string, { createdAt: number; id: string }>();
-  return getEvents(
-    state,
-    filter,
-    (a) => {
+  return getEvents(state, filter, (e) => {
+    if (e[0] === "event") {
+      const a = e[1];
       const cursor = a.event.pubkey + ":" + a.event.kind;
       let latest = latestCursors.get(cursor);
       if (!latest) {
@@ -232,31 +233,35 @@ const subscribeReplacable = (
       latest.id = a.event.id;
       latestCursors.set(cursor, latest);
       return callback(a);
-    },
-    complete
-  );
+    } else if (e[0] === "complete") {
+      complete();
+    }
+  });
 };
 
 const isHex64 = (a: string) => /^[0-9a-f]{64}$/.test(a);
 
 type NewEventCallback = (
   event: NostrType.Event,
-  reactions: ReactiveMap<string, number>
+  reactions: EventReferer
 ) => void;
 
 const checkNewEvent = async (
   event: NostrType.Event,
   onNewEventAdded?: NewEventCallback
-): Promise<null | { reactions: ReactiveMap<string, number> }> => {
+): Promise<null | { referer: EventReferer }> => {
   const valid = await verifier(event);
   if (!valid) {
     return null;
   }
-  const reactions = new ReactiveMap<string, number>();
+  const referer = {
+    reactions: new ReactiveMap<string, number>(),
+    recievedEvents: new Set<string>(),
+  };
   if (onNewEventAdded) {
-    onNewEventAdded(event, reactions);
+    onNewEventAdded(event, referer);
   }
-  return { reactions };
+  return { referer };
 };
 
 const addEvent = (
@@ -290,7 +295,7 @@ const addEvent = (
           transition,
           relays: [relay],
           realTime,
-          reactions: valid.reactions,
+          referer: valid.referer,
         };
         const es = [...events.slice(0, right), newE, ...events.slice(right)];
         setEvents(es);
@@ -301,17 +306,27 @@ const addEvent = (
 
 const onNewEventAdded = (
   event: NostrType.Event,
-  reactions: ReactiveMap<string, number>,
+  referer: EventReferer,
   state: AppState
 ) => {
+  const events = new Map<string, number>();
   getEvents(state, { "#e": [event.id], kinds: [7] }, (e) => {
-    const count = reactions.get(e.event.content);
-    if (count) {
-      reactions.set(e.event.content, count + 1);
-    } else {
-      reactions.set(e.event.content, 1);
+    if (e[0] === "event") {
+      const event = e[1].event;
+      if (referer.recievedEvents.has(event.id)) {
+        return;
+      }
+      referer.recievedEvents.add(event.id);
+      const count = events.get(event.content) || 0;
+      events.set(event.content, count + 1);
+      return;
+    } else if (e[0] == "eose") {
+      for (const [k, v] of events) {
+        const count = referer.reactions.get(k) || 0;
+        referer.reactions.set(k, count + v);
+        return referer;
+      }
     }
-    return reactions;
   });
 };
 
@@ -778,10 +793,13 @@ const getParent = (
   resultSetter("value", ["loading"]);
   const ch = new Channel<{
     e: EventPacket;
-    type: ["verified", ReactiveMap<string, number>] | ["unverifed"];
+    type: ["verified", EventReferer] | ["unverifed"];
   }>();
   getEvents(state, { ids: [parent] }, (e) => {
-    ch.send({ e, type: ["unverifed"] });
+    if (e[0] !== "event") {
+      return;
+    }
+    ch.send({ e: e[1], type: ["unverifed"] });
   });
   (async () => {
     for await (const { e, type } of ch) {
@@ -793,7 +811,7 @@ const getParent = (
               "event",
               {
                 event: prev[1].event,
-                reactions: prev[1].reactions,
+                referer: prev[1].referer,
                 relays: [...prev[1].relays, e.from],
                 transition: false,
                 realTime: false,
@@ -805,7 +823,7 @@ const getParent = (
               "event",
               {
                 event: e.event,
-                reactions: type[1],
+                referer: type[1],
                 relays: [e.from],
                 transition: false,
                 realTime: false,
@@ -814,7 +832,7 @@ const getParent = (
           } else {
             checkNewEvent(e.event, onNewEventAdded).then((valid) => {
               if (valid) {
-                ch.send({ e, type: ["verified", valid.reactions] });
+                ch.send({ e, type: ["verified", valid.referer] });
               }
               resolve(null);
             });
@@ -958,7 +976,7 @@ function NoteSingle(props: {
             ></NostrText>
           </div>
           <div>
-            <For each={[...event.reactions]}>
+            <For each={[...event.referer.reactions]}>
               {([emoji, count]) => (
                 <span>
                   {emoji} {count}

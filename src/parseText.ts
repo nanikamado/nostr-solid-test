@@ -5,6 +5,8 @@ export type TextSegment =
 
 export type ParseTextResult = TextSegment[];
 
+const imageUrl = /^https?:\/\/[^\s]+?\.(jpg|jpeg|png|gif|bmp|webp)(\?[^\s]*)?/i;
+
 export const parseText = (
   text: string,
   emojiMap: Map<string, string>,
@@ -34,11 +36,18 @@ export const parseText = (
         }
       }
     } else {
-      for (const image of images) {
-        if (text.startsWith(image, specialTextStart)) {
-          pushSpecialText(["image", image], image.length);
-          matched = true;
-          break;
+      const match = text.slice(specialTextStart).match(imageUrl);
+      if (match) {
+        const image = match[0];
+        pushSpecialText(["image", image], image.length);
+        matched = true;
+      } else {
+        for (const image of images) {
+          if (text.startsWith(image, specialTextStart)) {
+            pushSpecialText(["image", image], image.length);
+            matched = true;
+            break;
+          }
         }
       }
     }
