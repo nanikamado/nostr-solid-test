@@ -891,7 +891,7 @@ function NoteSingle(props: {
   const [jsonOn, setJsonOn] = createSignal(false);
 
   return (
-    <div class="py-2 whitespace-pre-wrap">
+    <div class="py-2">
       <div class="flex w-full gap-1">
         <div class="size-10 shrink-0 overflow-hidden rounded">
           <Show when={prof()}>
@@ -958,8 +958,8 @@ function NoteSingle(props: {
             </Show>
           </div>
           <Show when={jsonOn()}>
-            <div class="font-mono text-sm mt-1 opacity-80">
-              {JSON.stringify(event.event)}
+            <div class="font-mono text-sm mt-1 opacity-80 whitespace-break-spaces break-all">
+              {formatEvent(event.event)}
             </div>
           </Show>
           <div class="opacity-50 mt-0.5 text-sm">
@@ -981,4 +981,30 @@ const NoteLoading = () => {
       </div>
     </div>
   );
+};
+
+const formatEvent = (event: NostrType.Event) => {
+  let tags;
+  if (event.tags.length === 0) {
+    tags = "[]";
+  } else {
+    tags =
+      "[\n" +
+      event.tags
+        .map((t) => {
+          const tag = t.map((a) => JSON.stringify(a)).join(", ");
+          return `        [${tag}]`;
+        })
+        .join(",\n") +
+      "\n    ]";
+  }
+  return `{
+    "kind" : ${event.kind},
+    "pubkey" : "${event.pubkey}",
+    "created_at" : ${event.created_at},
+    "content" : ${JSON.stringify(event.content)},
+    "tags" : ${tags},
+    "id" : "${event.id}",
+    "sig" : "${event.sig}"
+}`;
 };
