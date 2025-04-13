@@ -16,6 +16,7 @@
     "npm:@kobalte/core@~0.13.9": "0.13.9_solid-js@1.9.5__seroval@1.2.1",
     "npm:@solid-primitives/deep@0.3": "0.3.0_solid-js@1.9.5__seroval@1.2.1",
     "npm:@solid-primitives/intersection-observer@^2.2.0": "2.2.0_solid-js@1.9.5__seroval@1.2.1",
+    "npm:@solid-primitives/map@0.6": "0.6.0_solid-js@1.9.5__seroval@1.2.1",
     "npm:@solid-primitives/scroll@^2.1.0": "2.1.0_solid-js@1.9.5__seroval@1.2.1",
     "npm:@solidjs/router@~0.15.3": "0.15.3_solid-js@1.9.5__seroval@1.2.1",
     "npm:@tailwindcss/vite@^4.0.8": "4.0.8_vite@6.1.1_lightningcss@1.29.1",
@@ -410,7 +411,7 @@
       "dependencies": [
         "@solid-primitives/event-listener",
         "@solid-primitives/keyed",
-        "@solid-primitives/map",
+        "@solid-primitives/map@0.4.13_solid-js@1.9.5__seroval@1.2.1",
         "@solid-primitives/media",
         "@solid-primitives/props",
         "@solid-primitives/refs",
@@ -519,6 +520,13 @@
     },
     "@solid-primitives/map@0.4.13_solid-js@1.9.5__seroval@1.2.1": {
       "integrity": "sha512-B1zyFbsiTQvqPr+cuPCXO72sRuczG9Swncqk5P74NCGw1VE8qa/Ry9GlfI1e/VdeQYHjan+XkbE3rO2GW/qKew==",
+      "dependencies": [
+        "@solid-primitives/trigger",
+        "solid-js"
+      ]
+    },
+    "@solid-primitives/map@0.6.0_solid-js@1.9.5__seroval@1.2.1": {
+      "integrity": "sha512-h8uCJNxUTvzNK/aTW9vJCd/PQeBkUL8i7AyLPvTFqMgcMnJ1I5GzAi5JODzxpxQwffxoqJyQtOE1vBqFzDv0Vw==",
       "dependencies": [
         "@solid-primitives/trigger",
         "solid-js"
@@ -1494,6 +1502,7 @@
         "npm:@kobalte/core@~0.13.9",
         "npm:@solid-primitives/deep@0.3",
         "npm:@solid-primitives/intersection-observer@^2.2.0",
+        "npm:@solid-primitives/map@0.6",
         "npm:@solid-primitives/scroll@^2.1.0",
         "npm:@solidjs/router@~0.15.3",
         "npm:@tailwindcss/vite@^4.0.8",

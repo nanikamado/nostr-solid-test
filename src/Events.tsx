@@ -6,7 +6,6 @@ import {
   createRxBackwardReq,
   RxNostr,
   EventPacket,
-  isFiltered,
 } from "rx-nostr";
 import { verifier } from "rx-nostr-crypto";
 import * as Rx from "rxjs";
@@ -25,15 +24,18 @@ import ChevronDown from "heroicons/24/outline/chevron-down.svg";
 import ToggleButton from "./ToggleButton.tsx";
 import binarySearch from "./utils/binarySearch.ts";
 import {
+  BatchPool,
   getBridgeInfo,
   makeProfileFromEvent,
-  mergeFilters,
   ParsedNip05,
   UserProfile,
 } from "./nostr.ts";
+import { Channel } from "./channel.ts";
+import { ReactiveMap } from "@solid-primitives/map";
 
 type EventSignal = {
   event: NostrType.Event;
+  reactions: ReactiveMap<string, number>;
   transition: boolean;
   realTime?: boolean;
   relays: string[];
@@ -55,6 +57,7 @@ type LoadingOldEventsStatus = {
 class RelayState {
   concurrentReqs: number = 0;
   backwardReqBatch: WaitingBackwardReq[] = [];
+  batchPool: BatchPool;
   #connection: false | Rx.Subscription = false;
   #loadingOldEvents: false | LoadingOldEventsStatus = false;
   #baseFilter: Promise<NostrType.Filter>;
@@ -83,6 +86,7 @@ class RelayState {
     this.#rxNostr = rxNostr;
     this.#addEvent = addEvent;
     this.#onScreenEventLowerbound = onScreenEventLowerbound;
+    this.batchPool = new BatchPool(relay);
   }
 
   startSubscribing() {
@@ -179,8 +183,6 @@ class RelayState {
   }
 }
 
-const MAX_CUNCURRENT_REQS = 10;
-
 const getEvents = (
   state: AppState,
   filter: NostrType.Filter,
@@ -193,65 +195,13 @@ const getEvents = (
       complete();
     }
   };
-  for (const [relay, relayState] of state.relays) {
-    const cb = (a: EventPacket) => {
-      if (!isFiltered(a.event, filter)) {
-        return;
-      }
-      callback(a);
-    };
-    if (relayState.concurrentReqs >= MAX_CUNCURRENT_REQS) {
-      let merged = false;
-      for (const batch of relayState.backwardReqBatch) {
-        const m = mergeFilters(batch.filter, filter);
-        if (m) {
-          merged = true;
-          batch.filter = m;
-          const originalCb = batch.callback;
-          batch.callback = (e) => {
-            cb(e);
-            originalCb(e);
-          };
-          break;
-        }
-      }
-      if (!merged) {
-        relayState.backwardReqBatch.push({ filter, callback: cb, complete });
-      }
-      continue;
-    }
-    relayState.concurrentReqs++;
-    const comp = (complete: () => void) => {
-      relayState.concurrentReqs--;
-      complete();
-      if (relayState.concurrentReqs < MAX_CUNCURRENT_REQS) {
-        const batch = relayState.backwardReqBatch.shift();
-        if (batch) {
-          relayState.concurrentReqs++;
-          subscribe(batch.filter, batch.callback, batch.complete);
-        }
-      }
-    };
-    const subscribe = (
-      filter: NostrType.Filter,
-      cb: (e: EventPacket) => void,
-      complete: () => void
-    ) => {
-      const rxReq = createRxBackwardReq();
-      state.rxNostr.use(rxReq, { relays: [relay] }).subscribe({
-        next: cb,
-        complete: () => {
-          comp(complete);
-        },
-        error: (e) => {
-          comp(complete);
-          console.error(e);
-        },
-      });
-      rxReq.emit(filter);
-      rxReq.over();
-    };
-    subscribe(filter, cb, countComplete);
+  for (const [_relay, relayState] of state.relays) {
+    relayState.batchPool.getEvents(
+      state.rxNostr,
+      filter,
+      callback,
+      countComplete
+    );
   }
 };
 
@@ -289,13 +239,34 @@ const subscribeReplacable = (
 
 const isHex64 = (a: string) => /^[0-9a-f]{64}$/.test(a);
 
+type NewEventCallback = (
+  event: NostrType.Event,
+  reactions: ReactiveMap<string, number>
+) => void;
+
+const checkNewEvent = async (
+  event: NostrType.Event,
+  onNewEventAdded?: NewEventCallback
+): Promise<null | { reactions: ReactiveMap<string, number> }> => {
+  const valid = await verifier(event);
+  if (!valid) {
+    return null;
+  }
+  const reactions = new ReactiveMap<string, number>();
+  if (onNewEventAdded) {
+    onNewEventAdded(event, reactions);
+  }
+  return { reactions };
+};
+
 const addEvent = (
   events: EventSignal[],
   setEvents: SetStoreFunction<EventSignal[]>,
   event: NostrType.Event,
   relay: string,
   transition: boolean,
-  realTime: boolean
+  realTime: boolean,
+  onNewEventAdded?: NewEventCallback
 ) => {
   if (normalizeUrl(relay) !== relay) {
     throw new Error(`invalid relay "${relay}"`);
@@ -312,14 +283,36 @@ const addEvent = (
       setEvents(e, "relays", events[e].relays.length, relay);
     }
   } else {
-    verifier(event).then((valid) => {
+    checkNewEvent(event, onNewEventAdded).then((valid) => {
       if (valid) {
-        const newE = { event: event, transition, relays: [relay], realTime };
+        const newE = {
+          event,
+          transition,
+          relays: [relay],
+          realTime,
+          reactions: valid.reactions,
+        };
         const es = [...events.slice(0, right), newE, ...events.slice(right)];
         setEvents(es);
       }
     });
   }
+};
+
+const onNewEventAdded = (
+  event: NostrType.Event,
+  reactions: ReactiveMap<string, number>,
+  state: AppState
+) => {
+  getEvents(state, { "#e": [event.id], kinds: [7] }, (e) => {
+    const count = reactions.get(e.event.content);
+    if (count) {
+      reactions.set(e.event.content, count + 1);
+    } else {
+      reactions.set(e.event.content, 1);
+    }
+    return reactions;
+  });
 };
 
 const removeEvent = (
@@ -530,7 +523,9 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
         baseFilter,
         rxNostr,
         (e, r, transition, realTime) =>
-          addEvent(events, setEvents, e, r, transition, realTime),
+          addEvent(events, setEvents, e, r, transition, realTime, (e, s) =>
+            onNewEventAdded(e, s, state)
+          ),
         onScreenEventLowerbound
       );
     for (const relay in rxNostr.getDefaultRelays()) {
@@ -764,7 +759,8 @@ const DateText = (props: { date: number }) => {
 const getParent = (
   state: AppState,
   event: NostrType.Event,
-  resultSetter: SetStoreFunction<ThreadParentStore>
+  resultSetter: SetStoreFunction<ThreadParentStore>,
+  onNewEventAdded?: NewEventCallback
 ) => {
   let root;
   let reply;
@@ -780,32 +776,54 @@ const getParent = (
     return;
   }
   resultSetter("value", ["loading"]);
-  getEvents(
-    state,
-    { ids: [parent] },
-    (e) => {
-      resultSetter("value", (prev) => {
-        let r;
-        if (prev && prev[0] === "event") {
-          r = {
-            event: e.event,
-            relays: [...prev[1].relays, e.from],
-            transition: false,
-            realTime: false,
-          };
-        } else {
-          r = {
-            event: e.event,
-            relays: [e.from],
-            transition: false,
-            realTime: false,
-          };
-        }
-        return ["event", r];
+  const ch = new Channel<{
+    e: EventPacket;
+    type: ["verified", ReactiveMap<string, number>] | ["unverifed"];
+  }>();
+  getEvents(state, { ids: [parent] }, (e) => {
+    ch.send({ e, type: ["unverifed"] });
+  });
+  (async () => {
+    for await (const { e, type } of ch) {
+      await new Promise((resolve) => {
+        resultSetter("value", (prev) => {
+          if (prev && prev[0] === "event") {
+            resolve(null);
+            return [
+              "event",
+              {
+                event: prev[1].event,
+                reactions: prev[1].reactions,
+                relays: [...prev[1].relays, e.from],
+                transition: false,
+                realTime: false,
+              },
+            ];
+          } else if (type[0] === "verified") {
+            resolve(null);
+            return [
+              "event",
+              {
+                event: e.event,
+                reactions: type[1],
+                relays: [e.from],
+                transition: false,
+                realTime: false,
+              },
+            ];
+          } else {
+            checkNewEvent(e.event, onNewEventAdded).then((valid) => {
+              if (valid) {
+                ch.send({ e, type: ["verified", valid.reactions] });
+              }
+              resolve(null);
+            });
+            return prev;
+          }
+        });
       });
-    },
-    () => {}
-  );
+    }
+  })();
 };
 
 type ThreadParentStore = { value: null | ["loading"] | ["event", EventSignal] };
@@ -818,7 +836,9 @@ function Note(
   const [threadParent, setThreadParent] = createStore<ThreadParentStore>({
     value: null,
   });
-  getParent(state, event.event, setThreadParent);
+  getParent(state, event.event, setThreadParent, (e, s) =>
+    onNewEventAdded(e, s, state)
+  );
 
   return (
     <div
@@ -891,7 +911,7 @@ function NoteSingle(props: {
   const [jsonOn, setJsonOn] = createSignal(false);
 
   return (
-    <div class="py-2">
+    <div class="py-2 whitespace-pre-wrap">
       <div class="flex w-full gap-1">
         <div class="size-10 shrink-0 overflow-hidden rounded">
           <Show when={prof()}>
@@ -936,6 +956,15 @@ function NoteSingle(props: {
               emojiMap={emojiMap}
               images={images}
             ></NostrText>
+          </div>
+          <div>
+            <For each={[...event.reactions]}>
+              {([emoji, count]) => (
+                <span>
+                  {emoji} {count}
+                </span>
+              )}
+            </For>
           </div>
           <div class="flex justify-around mt-1">
             <ToggleButton

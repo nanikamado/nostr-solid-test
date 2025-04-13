@@ -1,4 +1,10 @@
 import * as NostrType from "nostr-typedef";
+import {
+  createRxBackwardReq,
+  EventPacket,
+  isFiltered,
+  RxNostr,
+} from "rx-nostr";
 
 export type ParsedNip05 = {
   name: string;
@@ -98,7 +104,7 @@ export const makeProfileFromEvent = (event: NostrType.Event): UserProfile => {
 const eqSet = <T>(xs: Set<T>, ys: Set<T>) =>
   xs.size === ys.size && [...xs].every((x) => ys.has(x));
 
-export const mergeFilters = (
+const mergeFilters = (
   a: NostrType.Filter,
   b: NostrType.Filter
 ): NostrType.Filter | null => {
@@ -141,3 +147,84 @@ export const mergeFilters = (
     return null;
   }
 };
+
+type WaitingBackwardReq = {
+  filter: NostrType.Filter;
+  callback: (e: EventPacket) => void;
+  complete: () => void;
+};
+
+const MAX_CUNCURRENT_REQS = 10;
+
+export class BatchPool {
+  concurrentReqs: number = 0;
+  backwardReqBatch: WaitingBackwardReq[] = [];
+
+  constructor(private relay: string) {}
+
+  getEvents(
+    rxNostr: RxNostr,
+    filter: NostrType.Filter,
+    callback: (e: EventPacket) => void,
+    complete: () => void
+  ) {
+    const cb = (a: EventPacket) => {
+      if (!isFiltered(a.event, filter)) {
+        return;
+      }
+      callback(a);
+    };
+    if (this.concurrentReqs >= MAX_CUNCURRENT_REQS) {
+      let merged = false;
+      for (const batch of this.backwardReqBatch) {
+        const m = mergeFilters(batch.filter, filter);
+        if (m) {
+          merged = true;
+          batch.filter = m;
+          const originalCb = batch.callback;
+          batch.callback = (e) => {
+            cb(e);
+            originalCb(e);
+          };
+          break;
+        }
+      }
+      if (!merged) {
+        this.backwardReqBatch.push({ filter, callback: cb, complete });
+      }
+      return;
+    }
+    this.concurrentReqs++;
+    const comp = (complete: () => void) => {
+      this.concurrentReqs--;
+      complete();
+      if (this.concurrentReqs < MAX_CUNCURRENT_REQS) {
+        const batch = this.backwardReqBatch.shift();
+        if (batch) {
+          this.concurrentReqs++;
+          subscribe(batch.filter, batch.callback, batch.complete);
+        }
+      }
+    };
+    const subscribe = (
+      filter: NostrType.Filter,
+      cb: (e: EventPacket) => void,
+      complete: () => void
+    ) => {
+      const rxReq = createRxBackwardReq();
+      rxNostr.use(rxReq, { relays: [this.relay] }).subscribe({
+        next: cb,
+        complete: () => {
+          comp(complete);
+        },
+        error: (e) => {
+          comp(complete);
+          console.error(e);
+        },
+      });
+      rxReq.emit(filter);
+      rxReq.over();
+    };
+    subscribe(filter, cb, complete);
+  }
+}
