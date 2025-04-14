@@ -322,10 +322,9 @@ const onNewEventAdded = (
       return;
     } else if (e[0] == "eose") {
       for (const [k, v] of events) {
-        const count = referer.reactions.get(k) || 0;
-        referer.reactions.set(k, count + v);
-        return referer;
+        referer.reactions.set(k, v);
       }
+      return referer;
     }
   });
 };
@@ -976,7 +975,7 @@ function NoteSingle(props: {
             ></NostrText>
           </div>
           <div>
-            <For each={[...event.referer.reactions]}>
+            <For each={[...event.referer.reactions.entries()]}>
               {([emoji, count]) => (
                 <span>
                   {emoji} {count}
