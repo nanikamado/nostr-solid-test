@@ -5,6 +5,7 @@ import {
   isFiltered,
   RxNostr,
 } from "rx-nostr";
+import * as punycode from "punycode";
 
 export type ParsedNip05 = {
   name: string;
@@ -19,7 +20,11 @@ export const parseNip05 = (nip05: string): ParsedNip05 | null => {
   }
   const name = s.slice(0, s.length - 1).join("@");
   const domain = s[s.length - 1];
-  return { name: name, domain, text: name === "_" ? "@" + domain : nip05 };
+  return {
+    name: name,
+    domain,
+    text: (name === "_" ? "" : name) + "@" + punycode.toUnicode(domain),
+  };
 };
 
 export type BridgedAccountProfile = {
@@ -30,35 +35,34 @@ export type BridgedAccountProfile = {
 
 export const getBridgeInfo = (
   event: NostrType.Event,
-  nip05?: ParsedNip05
+  nip05?: ParsedNip05,
 ): BridgedAccountProfile | undefined => {
   let bridgeSerever;
   let id;
   if (nip05 && nip05.domain === "momostr.pink") {
     bridgeSerever = nip05.domain;
     const sections = nip05.name.split("_at_");
-    id =
-      "@" +
+    id = "@" +
       sections.slice(0, sections.length - 1).join("_at_") +
       "@" +
-      sections[sections.length - 1];
+      punycode.toUnicode(sections[sections.length - 1]);
   } else if (nip05 && nip05.domain.endsWith(".mostr.pub")) {
     bridgeSerever = "mostr.pub";
-    id =
-      "@" +
+    id = "@" +
       nip05.name +
       "@" +
-      nip05.domain.replace(/\.mostr\.pub$/, "").replace("-", ".");
+      punycode.toUnicode(
+        nip05.domain.replace(/\.mostr\.pub$/, "").replace("-", "."),
+      );
   }
   const activitypub = event.tags.find(
-    (t) => t[0] === "proxy" && t[2] === "activitypub"
+    (t) => t[0] === "proxy" && t[2] === "activitypub",
   );
   const atproto = event.tags.find(
-    (t) => t[0] === "proxy" && t[2] === "atproto"
+    (t) => t[0] === "proxy" && t[2] === "atproto",
   );
   const web = event.tags.find((t) => t[0] === "proxy" && t[2] === "web");
-  const bridgedFrom =
-    (atproto?.[2] && "Bluesky") ||
+  const bridgedFrom = (atproto?.[2] && "Bluesky") ||
     (activitypub?.[2] && "Fediverse") ||
     (web?.[2] && "Web");
   if (!bridgedFrom) {
@@ -106,7 +110,7 @@ const eqSet = <T>(xs: Set<T>, ys: Set<T>) =>
 
 const mergeFilters = (
   a: NostrType.Filter,
-  b: NostrType.Filter
+  b: NostrType.Filter,
 ): NostrType.Filter | null => {
   let differentKey;
   if (
@@ -169,7 +173,7 @@ export class BatchPool {
   getEvents(
     rxNostr: RxNostr,
     filter: NostrType.Filter,
-    callback: (e: EventStreamElement) => void
+    callback: (e: EventStreamElement) => void,
   ) {
     const cb = (a: EventStreamElement) => {
       if (a[0] === "event" && !isFiltered(a[1].event, filter)) {
@@ -211,7 +215,7 @@ export class BatchPool {
     };
     const subscribe = (
       filter: NostrType.Filter,
-      cb: (e: EventStreamElement) => void
+      cb: (e: EventStreamElement) => void,
     ) => {
       const rxReq = createRxBackwardReq();
       rxNostr.use(rxReq, { relays: [this.relay] }).subscribe({
