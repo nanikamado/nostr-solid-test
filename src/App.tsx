@@ -1,7 +1,7 @@
 import * as RxNostr from "rx-nostr";
 import "./App.css";
 import { NostrEvents } from "./Events.tsx";
-import { Route, useParams, HashRouter, useLocation } from "@solidjs/router";
+import { HashRouter, Route, useLocation, useParams } from "@solidjs/router";
 import { createMemo, Show } from "solid-js";
 
 const baseRelays = [
@@ -21,7 +21,7 @@ const Home = (type: "home" | "user") => () => {
     }
   });
   return (
-    <div class="h-dvh mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
+    <div class="mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
       <Show when={npub()} fallback={<h2>Invalid npub: {params.npub}</h2>}>
         <h2 class="mt-3">Nost Events</h2>
         <NostrEvents
@@ -35,7 +35,7 @@ const Home = (type: "home" | "user") => () => {
 const Tag = () => {
   const params = useParams();
   return (
-    <div class="h-dvh mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
+    <div class="mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
       <h2 class="mt-3">Nost Events</h2>
       <NostrEvents
         tlType={{
@@ -51,7 +51,7 @@ const Tag = () => {
 const RelayTl = () => {
   const location = useLocation();
   return (
-    <div class="h-dvh mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
+    <div class="mx-auto px-3 grid grid-cols-1 grid-rows-[3rem_1fr] max-w-xl">
       <h2 class="mt-3">Nost Events</h2>
       <NostrEvents
         tlType={{
@@ -66,7 +66,7 @@ const RelayTl = () => {
 
 function Usage() {
   return (
-    <div class="h-dvh px-10 mx-auto grid grid-cols-1 grid-rows-[3rem_1fr] p-10">
+    <div class="px-10 mx-auto grid grid-cols-1 grid-rows-[3rem_1fr] p-10">
       <h2>Usage</h2>
       <p>/#/home/:npub</p>
     </div>
