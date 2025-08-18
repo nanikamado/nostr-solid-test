@@ -1,11 +1,11 @@
 import "./Events.css";
-import { onCleanup, onMount, For, Show, createRoot } from "solid-js";
+import { createRoot, For, onCleanup, onMount, Show } from "solid-js";
 import {
-  createRxNostr,
-  createRxForwardReq,
   createRxBackwardReq,
-  RxNostr,
+  createRxForwardReq,
+  createRxNostr,
   EventPacket,
+  RxNostr,
 } from "rx-nostr";
 import { verifier } from "rx-nostr-crypto";
 import * as Rx from "rxjs";
@@ -72,7 +72,7 @@ class RelayState {
     event: NostrType.Event,
     relay: string,
     transition: boolean,
-    realTime: boolean
+    realTime: boolean,
   ) => void;
   #onScreenEventLowerbound: { value: number };
 
@@ -84,9 +84,9 @@ class RelayState {
       event: NostrType.Event,
       relay: string,
       transition: boolean,
-      realTime: boolean
+      realTime: boolean,
     ) => void,
-    onScreenEventLowerbound: { value: number }
+    onScreenEventLowerbound: { value: number },
   ) {
     this.#baseFilter = baseFilter;
     this.#rxNostr = rxNostr;
@@ -192,7 +192,7 @@ class RelayState {
 const getEvents = (
   state: AppState,
   filter: NostrType.Filter,
-  callback: (e: EventStreamElement) => void
+  callback: (e: EventStreamElement) => void,
 ) => {
   let count = state.relays.size();
   for (const [_relay, relayState] of state.relays) {
@@ -211,7 +211,7 @@ const subscribeReplacable = (
   state: AppState,
   filter: NostrType.Filter,
   callback: (e: EventPacket) => void,
-  complete: () => void = () => {}
+  complete: () => void = () => {},
 ) => {
   const latestCursors = new Map<string, { createdAt: number; id: string }>();
   return getEvents(state, filter, (e) => {
@@ -243,12 +243,12 @@ const isHex64 = (a: string) => /^[0-9a-f]{64}$/.test(a);
 
 type NewEventCallback = (
   event: NostrType.Event,
-  reactions: EventReferer
+  reactions: EventReferer,
 ) => void;
 
 const checkNewEvent = async (
   event: NostrType.Event,
-  onNewEventAdded?: NewEventCallback
+  onNewEventAdded?: NewEventCallback,
 ): Promise<null | { referer: EventReferer }> => {
   const valid = await verifier(event);
   if (!valid) {
@@ -271,7 +271,7 @@ const addEvent = (
   relay: string,
   transition: boolean,
   realTime: boolean,
-  onNewEventAdded?: NewEventCallback
+  onNewEventAdded?: NewEventCallback,
 ) => {
   if (normalizeUrl(relay) !== relay) {
     throw new Error(`invalid relay "${relay}"`);
@@ -280,7 +280,7 @@ const addEvent = (
     events,
     (e) =>
       e.event.created_at < event.created_at ||
-      (e.event.created_at === event.created_at && e.event.id > event.id)
+      (e.event.created_at === event.created_at && e.event.id > event.id),
   );
   if (events[right - 1]?.event.id === event.id) {
     const e = right - 1;
@@ -307,7 +307,7 @@ const addEvent = (
 const onNewEventAdded = (
   event: NostrType.Event,
   referer: EventReferer,
-  state: AppState
+  state: AppState,
 ) => {
   const events = new Map<string, number>();
   getEvents(state, { "#e": [event.id], kinds: [7] }, (e) => {
@@ -333,7 +333,7 @@ const removeEvent = (
   events: EventSignal[],
   setEvents: SetStoreFunction<EventSignal[]>,
   i: number,
-  relay: string
+  relay: string,
 ) => {
   const last = events[i];
   const relayI = last.relays.indexOf(relay);
@@ -352,7 +352,7 @@ const removeEventsFromBottom = (
   events: EventSignal[],
   setEvents: SetStoreFunction<EventSignal[]>,
   n: number,
-  relay: string
+  relay: string,
 ) => {
   for (let i = events.length - 1; n > 0 && i >= 0; i--) {
     if (removeEvent(events, setEvents, i, relay)) {
@@ -364,7 +364,7 @@ const removeEventsFromBottom = (
 const addMoreRelays = (
   baseFilter: Promise<NostrType.Filter>,
   state: AppState,
-  relayState: (relay: string) => RelayState
+  relayState: (relay: string) => RelayState,
 ) =>
   baseFilter.then((filter) => {
     if (filter.authors) {
@@ -395,7 +395,7 @@ const addMoreRelays = (
                   t.length >= 2 && t[0] === "r" && t[2] !== "read"
                     ? [normalizeUrl(t[1])]
                     : []
-                )
+                ),
               ),
             ];
             preferedRelays.push(rs);
@@ -413,7 +413,7 @@ const addMoreRelays = (
           for (const rs of preferedRelays) {
             if (rs.length && !rs.find((r) => state.relays.has(r))) {
               rs.sort(
-                (a, b) => (relayCount.get(a) || 0) - (relayCount.get(b) || 0)
+                (a, b) => (relayCount.get(a) || 0) - (relayCount.get(b) || 0),
               );
               rs.reverse();
               for (const r of rs) {
@@ -437,7 +437,7 @@ const addMoreRelays = (
                           "could not use relay",
                           r,
                           relayCount.get(r),
-                          e
+                          e,
                         );
                         resolve(false);
                       },
@@ -453,7 +453,7 @@ const addMoreRelays = (
               }
             }
           }
-        }
+        },
       );
     }
   });
@@ -463,7 +463,7 @@ const getFollowees = (
   state: AppState,
   rxNostr: RxNostr,
   mkRelayState: (relay: string) => RelayState,
-  setBaseFilter: (f: NostrType.Filter) => void
+  setBaseFilter: (f: NostrType.Filter) => void,
 ) =>
   subscribeReplacable(state, { kinds: [3, 10_002], authors: [npub] }, (a) => {
     if (a.event.kind === 3) {
@@ -492,11 +492,13 @@ type NostrEventsProps = {
   tlType: TlType;
 };
 
-export type TlType = (
-  | { type: "home"; npub: () => string }
-  | { type: "user"; npub: () => string }
-  | { type: "customFilter"; baseFilter: () => NostrType.Filter }
-) & { baseRelays: () => string[] };
+export type TlType =
+  & (
+    | { type: "home"; npub: () => string }
+    | { type: "user"; npub: () => string }
+    | { type: "customFilter"; baseFilter: () => NostrType.Filter }
+  )
+  & { baseRelays: () => string[] };
 
 export function NostrEvents({ tlType }: NostrEventsProps) {
   const [events, setEvents] = createStore<EventSignal[]>([]);
@@ -538,9 +540,8 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
         rxNostr,
         (e, r, transition, realTime) =>
           addEvent(events, setEvents, e, r, transition, realTime, (e, s) =>
-            onNewEventAdded(e, s, state)
-          ),
-        onScreenEventLowerbound
+            onNewEventAdded(e, s, state)),
+        onScreenEventLowerbound,
       );
     for (const relay in rxNostr.getDefaultRelays()) {
       const r = normalizeUrl(relay);
@@ -625,7 +626,7 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
   const observer = new IntersectionObserver((entries) => {
     for (const e of entries) {
       const ev = events.findIndex(
-        (ev) => ev.event.id == (e.target as HTMLElement).dataset.eventId
+        (ev) => ev.event.id == (e.target as HTMLElement).dataset.eventId,
       );
       if (ev === -1) {
         continue;
@@ -633,7 +634,7 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
       if (e.isIntersecting) {
         const isDown =
           ((e.rootBounds?.bottom || 0) + (e.rootBounds?.top || 0)) / 2 <
-          (e.boundingClientRect.bottom + e.boundingClientRect.top) / 2;
+            (e.boundingClientRect.bottom + e.boundingClientRect.top) / 2;
         if (isDown) {
           onScreenEventLowerbound.value = events[ev].event.created_at;
         }
@@ -678,17 +679,33 @@ const httpsProxy = (url: string) => {
   // }
 };
 
-const imageUrl = (original: string | undefined) =>
-  original ? httpsProxy(original) : "";
+const imageProxy = (url: string, option: string) =>
+  "https://api.yabu.me/v0/images/optimize/" + encodeURI(option) +
+  "/" + encodeURI(url);
+
+const imageUrl = (original: string | undefined, option: string) =>
+  original ? imageProxy(original, option) : "";
+
+function FallbackImage(props: { src: string; option: string; class: string }) {
+  const [src, setSrc] = createSignal(imageUrl(props.src, props.option));
+
+  return (
+    <img
+      class={props.class}
+      src={src()}
+      onError={() => setSrc(props.src)}
+    />
+  );
+}
 
 const verifyNip05Inner = async (
   name: string,
   domain: string,
-  pubkey: string
+  pubkey: string,
 ) => {
   const res = await (
     await fetch(
-      httpsProxy(`https://${domain}/.well-known/nostr.json?name=${name}`)
+      httpsProxy(`https://${domain}/.well-known/nostr.json?name=${name}`),
     )
   ).json();
   const nip05Pubkey = res.names?.[name];
@@ -698,7 +715,7 @@ const verifyNip05Inner = async (
 const verifyNip05 = (
   nip05: ParsedNip05,
   pubkey: string,
-  state: AppState
+  state: AppState,
 ): Accessor<boolean> => {
   const { name, domain } = nip05;
   if (state.Nip05Verified.get(pubkey) === undefined) {
@@ -750,10 +767,14 @@ const NostrText = (props: {
       {(section) => {
         if (section[0] === "emoji") {
           return (
-            <img class="inline-block h-[1.7em]" src={imageUrl(section[2])} />
+            <FallbackImage
+              class="inline-block h-[1.7em]"
+              src={section[2]}
+              option="height=50"
+            />
           );
         } else if (section[0] === "image") {
-          return <img src={imageUrl(section[1])} />;
+          return <FallbackImage src={section[1]} class="" option="width=800" />;
         } else {
           return <span>{section[1]}</span>;
         }
@@ -774,7 +795,7 @@ const getParent = (
   state: AppState,
   event: NostrType.Event,
   resultSetter: SetStoreFunction<ThreadParentStore>,
-  onNewEventAdded?: NewEventCallback
+  onNewEventAdded?: NewEventCallback,
 ) => {
   let root;
   let reply;
@@ -848,13 +869,16 @@ type ThreadParentStore = { value: null | ["loading"] | ["event", EventSignal] };
 function Note(
   event: EventSignal,
   observer: IntersectionObserver,
-  state: AppState
+  state: AppState,
 ) {
   const [threadParent, setThreadParent] = createStore<ThreadParentStore>({
     value: null,
   });
-  getParent(state, event.event, setThreadParent, (e, s) =>
-    onNewEventAdded(e, s, state)
+  getParent(
+    state,
+    event.event,
+    setThreadParent,
+    (e, s) => onNewEventAdded(e, s, state),
   );
 
   return (
@@ -873,7 +897,8 @@ function Note(
           event={event}
           state={state}
           threadParent={threadParent}
-        ></NoteSingle>
+        >
+        </NoteSingle>
       </div>
     </div>
   );
@@ -917,7 +942,7 @@ function NoteSingle(props: {
       { kinds: [0], authors: [event.event.pubkey] },
       (a: EventPacket) => {
         set(["profile", makeProfileFromEvent(a.event)]);
-      }
+      },
     );
     prof = () => get[1];
   } else {
@@ -931,8 +956,12 @@ function NoteSingle(props: {
     <div class="py-2 whitespace-pre-wrap">
       <div class="flex w-full gap-1">
         <div class="size-10 shrink-0 overflow-hidden rounded">
-          <Show when={prof()}>
-            <img src={imageUrl(prof()!.picture)} />
+          <Show when={prof() && prof()!.picture}>
+            <FallbackImage
+              src={prof()!.picture!}
+              class=""
+              option="width=100"
+            />
           </Show>
         </div>
         <div class="w-full">
@@ -942,14 +971,16 @@ function NoteSingle(props: {
                 <NostrText
                   text={prof()!.name}
                   emojiMap={prof()!.emojiMap}
-                ></NostrText>
+                >
+                </NostrText>
               </span>
               <span class="ml-3">
                 <UserId
                   event={event.event}
                   nip05={prof()?.nip05}
                   state={state}
-                ></UserId>
+                >
+                </UserId>
               </span>
               <span class="float-end">
                 <DateText date={event.event.created_at}></DateText>
@@ -964,7 +995,8 @@ function NoteSingle(props: {
               <NoteSingle
                 event={threadParent!.value![1] as EventSignal}
                 state={state}
-              ></NoteSingle>
+              >
+              </NoteSingle>
             </Show>
           </Show>
           <div>
@@ -972,7 +1004,8 @@ function NoteSingle(props: {
               text={event.event.content}
               emojiMap={emojiMap}
               images={images}
-            ></NostrText>
+            >
+            </NostrText>
           </div>
           <div>
             <For each={[...event.referer.reactions.entries()]}>
@@ -1034,8 +1067,7 @@ const formatEvent = (event: NostrType.Event) => {
   if (event.tags.length === 0) {
     tags = "[]";
   } else {
-    tags =
-      "[\n" +
+    tags = "[\n" +
       event.tags
         .map((t) => {
           const tag = t.map((a) => JSON.stringify(a)).join(", ");
