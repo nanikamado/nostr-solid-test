@@ -60,13 +60,18 @@ type LoadingOldEventsStatus = {
   rejects: ((e: unknown) => void)[];
 };
 
+type MutablePromise<T> = {
+  ready: Promise<boolean>;
+  value: T | null;
+};
+
 class RelayState {
   concurrentReqs: number = 0;
   backwardReqBatch: WaitingBackwardReq[] = [];
   batchPool: BatchPool;
   #connection: false | Rx.Subscription = false;
   #loadingOldEvents: false | LoadingOldEventsStatus = false;
-  #baseFilter: Promise<NostrType.Filter>;
+  #baseFilter: MutablePromise<NostrType.Filter>;
   #rxNostr: RxNostr;
   #addEvent: (
     event: NostrType.Event,
@@ -78,7 +83,7 @@ class RelayState {
 
   constructor(
     public relay: string,
-    baseFilter: Promise<NostrType.Filter>,
+    baseFilter: MutablePromise<NostrType.Filter>,
     rxNostr: RxNostr,
     addEvent: (
       event: NostrType.Event,
@@ -96,7 +101,7 @@ class RelayState {
   }
 
   startSubscribing() {
-    this.#baseFilter.then((baseFilter) => {
+    this.#baseFilter.ready.then(() => {
       if (this.#connection) {
         return;
       }
@@ -106,7 +111,7 @@ class RelayState {
         .subscribe((a) => {
           this.#addEvent(a.event, this.relay, true, true);
         });
-      rxReq.emit({ kinds: [1], limit: 11, ...baseFilter });
+      rxReq.emit({ kinds: [1], limit: 11, ...this.#baseFilter.value });
     });
   }
 
@@ -158,7 +163,8 @@ class RelayState {
           return;
         },
       });
-      this.#baseFilter.then((baseFilter) => {
+      this.#baseFilter.ready.then(() => {
+        const baseFilter = this.#baseFilter.value!;
         if (this.#onScreenEventLowerbound.value !== Number.MAX_SAFE_INTEGER) {
           rxReq.emit({
             kinds: [1],
@@ -192,15 +198,15 @@ class RelayState {
 const getEvents = (
   state: AppState,
   filter: NostrType.Filter,
-  callback: (e: EventStreamElement) => void,
+  callback: (e: { event: EventStreamElement; relay: string }) => void,
 ) => {
   let count = state.relays.size();
-  for (const [_relay, relayState] of state.relays) {
+  for (const [relay, relayState] of state.relays) {
     relayState.batchPool.getEvents(state.rxNostr, filter, (e) => {
-      callback(e);
+      callback({ event: e, relay });
       if (e[0] === "eose") {
         if (--count === 0) {
-          callback(["complete"]);
+          callback({ event: ["complete"], relay });
         }
       }
     });
@@ -213,27 +219,30 @@ const subscribeReplacable = (
   callback: (e: EventPacket) => void,
   complete: () => void = () => {},
 ) => {
-  const latestCursors = new Map<string, { createdAt: number; id: string }>();
+  const latestCursors = new Map<
+    string,
+    { event: NostrType.Event; relay: string }
+  >();
   return getEvents(state, filter, (e) => {
-    if (e[0] === "event") {
-      const a = e[1];
+    if (e.event[0] === "event") {
+      const a = e.event[1];
       const cursor = a.event.pubkey + ":" + a.event.kind;
-      let latest = latestCursors.get(cursor);
-      if (!latest) {
-        latest = { createdAt: 0, id: "x" };
-        latestCursors.set(cursor, latest);
-      }
+      const latest = latestCursors.get(cursor);
       if (
-        a.event.created_at < latest.createdAt ||
-        (a.event.created_at === latest.createdAt && a.event.id >= latest.id)
+        latest &&
+        (a.event.created_at < latest.event.created_at ||
+          (a.event.created_at === latest.event.created_at &&
+            a.event.id >= latest.event.id))
       ) {
         return;
       }
-      latest.createdAt = a.event.created_at;
-      latest.id = a.event.id;
-      latestCursors.set(cursor, latest);
+      if (latest && !a.event.tags.find((t) => t[0] === "-")) {
+        console.log("update event in", latest.relay, "to", a.event);
+        state.rxNostr.send(a.event, { relays: [latest.relay] });
+      }
+      latestCursors.set(cursor, { event: a.event, relay: e.relay });
       return callback(a);
-    } else if (e[0] === "complete") {
+    } else if (e.event[0] === "complete") {
       complete();
     }
   });
@@ -311,8 +320,8 @@ const onNewEventAdded = (
 ) => {
   const events = new Map<string, number>();
   getEvents(state, { "#e": [event.id], kinds: [7] }, (e) => {
-    if (e[0] === "event") {
-      const event = e[1].event;
+    if (e.event[0] === "event") {
+      const event = e.event[1].event;
       if (referer.recievedEvents.has(event.id)) {
         return;
       }
@@ -320,7 +329,7 @@ const onNewEventAdded = (
       const count = events.get(event.content) || 0;
       events.set(event.content, count + 1);
       return;
-    } else if (e[0] == "eose") {
+    } else if (e.event[0] == "eose") {
       for (const [k, v] of events) {
         referer.reactions.set(k, v);
       }
@@ -362,11 +371,12 @@ const removeEventsFromBottom = (
 };
 
 const addMoreRelays = (
-  baseFilter: Promise<NostrType.Filter>,
+  baseFilter: MutablePromise<NostrType.Filter>,
   state: AppState,
   relayState: (relay: string) => RelayState,
 ) =>
-  baseFilter.then((filter) => {
+  baseFilter.ready.then(() => {
+    const filter = baseFilter.value!;
     if (filter.authors) {
       const authors = filter.authors;
       console.log("adding more relays", authors);
@@ -529,10 +539,17 @@ export function NostrEvents({ tlType }: NostrEventsProps) {
     rxNostr.setDefaultRelays(tlType.baseRelays());
     state.relays = new UrlMap<RelayState>();
     onScreenEventLowerbound.value = Number.MAX_SAFE_INTEGER;
-    let setBaseFilter: (a: NostrType.Filter) => void;
-    const baseFilter: Promise<NostrType.Filter> = new Promise((resolve) => {
-      setBaseFilter = (fs) => resolve(fs);
-    });
+    let rsl: (a: boolean) => void;
+    const baseFilter: MutablePromise<NostrType.Filter> = {
+      ready: new Promise((resolve) => {
+        rsl = resolve;
+      }),
+      value: null,
+    };
+    const setBaseFilter = (fs: NostrType.Filter) => {
+      rsl(true);
+      baseFilter.value = fs;
+    };
     const relayState = (relay: string) =>
       new RelayState(
         relay,
@@ -687,13 +704,23 @@ const imageUrl = (original: string | undefined, option: string) =>
   original ? imageProxy(original, option) : "";
 
 function FallbackImage(props: { src: string; option: string; class: string }) {
-  const [src, setSrc] = createSignal(imageUrl(props.src, props.option));
+  const [src, setSrc] = createSignal({
+    url: imageUrl(props.src, props.option),
+    proxy: true,
+  });
 
   return (
     <img
       class={props.class}
-      src={src()}
-      onError={() => setSrc(props.src)}
+      src={src().url}
+      onError={() => {
+        if (src().proxy) {
+          console.error("failed to load", props.src, "proxy: on");
+          return setSrc({ url: props.src, proxy: false });
+        } else {
+          console.error("failed to load", props.src, "proxy: off");
+        }
+      }}
     />
   );
 }
@@ -816,10 +843,10 @@ const getParent = (
     type: ["verified", EventReferer] | ["unverifed"];
   }>();
   getEvents(state, { ids: [parent] }, (e) => {
-    if (e[0] !== "event") {
+    if (e.event[0] !== "event") {
       return;
     }
-    ch.send({ e: e[1], type: ["unverifed"] });
+    ch.send({ e: e.event[1], type: ["unverifed"] });
   });
   (async () => {
     for await (const { e, type } of ch) {
