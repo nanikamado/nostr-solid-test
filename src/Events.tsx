@@ -704,25 +704,34 @@ const imageUrl = (original: string | undefined, option: string) =>
   original ? imageProxy(original, option) : "";
 
 function FallbackImage(props: { src: string; option: string; class: string }) {
-  const [src, setSrc] = createSignal({
-    url: imageUrl(props.src, props.option),
-    proxy: true,
-  });
+  if (props.src.startsWith("https://") || props.src.startsWith("http://")) {
+    const [src, setSrc] = createSignal({
+      url: imageUrl(props.src, props.option),
+      proxy: true,
+    });
 
-  return (
-    <img
-      class={props.class}
-      src={src().url}
-      onError={() => {
-        if (src().proxy) {
-          console.error("failed to load", props.src, "proxy: on");
-          return setSrc({ url: props.src, proxy: false });
-        } else {
-          console.error("failed to load", props.src, "proxy: off");
-        }
-      }}
-    />
-  );
+    return (
+      <img
+        class={props.class}
+        src={src().url}
+        onError={() => {
+          if (src().proxy) {
+            console.error("failed to load", props.src, "proxy: on");
+            return setSrc({ url: props.src, proxy: false });
+          } else {
+            console.error("failed to load", props.src, "proxy: off");
+          }
+        }}
+      />
+    );
+  } else {
+    return (
+      <img
+        class={props.class}
+        src={props.src}
+      />
+    );
+  }
 }
 
 const verifyNip05Inner = async (
