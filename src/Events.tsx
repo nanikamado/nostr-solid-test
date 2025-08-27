@@ -725,6 +725,7 @@ function FallbackImage(props: { src: string; option: string; class: string }) {
       />
     );
   } else {
+    // for urls line `data:image/png;...`
     return (
       <img
         class={props.class}
@@ -811,6 +812,8 @@ const NostrText = (props: {
           );
         } else if (section[0] === "image") {
           return <FallbackImage src={section[1]} class="" option="width=800" />;
+        } else if (section[0] === "video") {
+          return <video src={section[1]}></video>;
         } else {
           return <span>{section[1]}</span>;
         }

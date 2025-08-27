@@ -1,16 +1,18 @@
 export type TextSegment =
   | ["text", string]
   | ["emoji", string, string]
-  | ["image", string];
+  | ["image", string]
+  | ["video", string];
 
 export type ParseTextResult = TextSegment[];
 
 const imageUrl = /^https?:\/\/[^\s]+?\.(jpg|jpeg|png|gif|bmp|webp)(\?[^\s]*)?/i;
+const videoUrl = /^https?:\/\/[^\s]+?\.(mp4|webm)(\?[^\s]*)?/i;
 
 export const parseText = (
   text: string,
   emojiMap: Map<string, string>,
-  images: Set<string>
+  images: Set<string>,
 ): ParseTextResult => {
   const result: ParseTextResult = [];
   let simpleTextStart = 0;
@@ -42,11 +44,18 @@ export const parseText = (
         pushSpecialText(["image", image], image.length);
         matched = true;
       } else {
-        for (const image of images) {
-          if (text.startsWith(image, specialTextStart)) {
-            pushSpecialText(["image", image], image.length);
-            matched = true;
-            break;
+        const match = text.slice(specialTextStart).match(videoUrl);
+        if (match) {
+          const video = match[0];
+          pushSpecialText(["video", video], video.length);
+          matched = true;
+        } else {
+          for (const image of images) {
+            if (text.startsWith(image, specialTextStart)) {
+              pushSpecialText(["image", image], image.length);
+              matched = true;
+              break;
+            }
           }
         }
       }
