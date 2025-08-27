@@ -813,7 +813,7 @@ const NostrText = (props: {
         } else if (section[0] === "image") {
           return <FallbackImage src={section[1]} class="" option="width=800" />;
         } else if (section[0] === "video") {
-          return <video src={section[1]}></video>;
+          return <video src={section[1]} controls></video>;
         } else {
           return <span>{section[1]}</span>;
         }
