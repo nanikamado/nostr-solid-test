@@ -697,17 +697,23 @@ const httpsProxy = (url: string) => {
 };
 
 const imageProxy = (url: string, option: string) =>
-  "https://api.yabu.me/v0/images/optimize/" + encodeURI(option) +
+  encodeURI(option) +
   "/" + encodeURI(url);
-
-const imageUrl = (original: string | undefined, option: string) =>
-  original ? imageProxy(original, option) : "";
 
 function FallbackImage(props: { src: string; option: string; class: string }) {
   if (props.src.startsWith("https://") || props.src.startsWith("http://")) {
     const [src, setSrc] = createSignal({
-      url: imageUrl(props.src, props.option),
-      proxy: true,
+      url: "https://api.yabu.me/v0/images/optimize/" +
+        imageProxy(props.src, props.option),
+      fallback: [
+        "https://nostr-image-optimizer.ocknamo.com/image/" +
+        imageProxy(props.src, props.option),
+        "https://nostr-image-optimizer.ocknamo.com/image/" + imageProxy(
+          "https://web.archive.org/web/30000000000000im_/" + props.src,
+          props.option,
+        ),
+        props.src,
+      ],
     });
 
     return (
@@ -715,9 +721,10 @@ function FallbackImage(props: { src: string; option: string; class: string }) {
         class={props.class}
         src={src().url}
         onError={() => {
-          if (src().proxy) {
+          const fallback = src().fallback;
+          if (fallback.length) {
             console.error("failed to load", props.src, "proxy: on");
-            return setSrc({ url: props.src, proxy: false });
+            return setSrc({ url: fallback[0], fallback: fallback.slice(1) });
           } else {
             console.error("failed to load", props.src, "proxy: off");
           }
